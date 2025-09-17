@@ -15,19 +15,20 @@ resources:
       endpoint: CadQuery
 
 jobs:
-- template: build-bindings-job.yml
-  parameters:
-    name: Linux
-    vmImage: 'ubuntu-22.04'
-    vmImage_compile: 'ubuntu-22.04'
-    platform: Linux
 
-- template: build-bindings-job.yml
-  parameters:
-    name: Windows
-    vmImage: 'ubuntu-22.04'
-    vmImage_compile: 'windows-latest'
-    platform: Windows
+#- template: build-bindings-job.yml
+#  parameters:
+#    name: Linux
+#    vmImage: 'ubuntu-22.04'
+#    vmImage_compile: 'ubuntu-22.04'
+#    platform: Linux
+#
+#- template: build-bindings-job.yml
+#  parameters:
+#    name: Windows
+#    vmImage: 'ubuntu-22.04'
+#    vmImage_compile: 'windows-latest'
+#    platform: Windows
 
 - template: build-bindings-job.yml
   parameters:
