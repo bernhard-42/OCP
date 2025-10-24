@@ -1,0 +1,6 @@
+.claude/
+GENERATION-PROCESS.md
+build/
+parsed_dump-*.yml
+*.pkl
+symbols_mangled_mac.dat
