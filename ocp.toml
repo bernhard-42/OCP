@@ -20,7 +20,6 @@ exclude_namespaces = [
 
 modules = [
 "NCollection",
-"AIS",
 "Standard",
 "gp",
 "math",
@@ -382,16 +381,16 @@ class Adaptor3d_Surface;
 '''
 
 [Linux]
-    modules = ["Xw"]
+    modules = ["Xw", "AIS"]
     symbols = "symbols_mangled_linux.dat"
 
 [Windows]
-    modules = ["WNT"]
+    modules = ["WNT", "AIS"]
     exclude_classes = ["Handle_*"]
     symbols = "symbols_mangled_win.dat"
 
 [OSX]
-    modules = ["Cocoa"]
+    modules = ["Cocoa", "AIS"]
     symbols = "symbols_mangled_mac.dat"
     prefix = "/usr/local/miniconda/envs/cpp-py-bindgen"
     includes = ['/usr/local/Cellar/gcc@8/8.3.0_2/lib/gcc/8/gcc/x86_64-apple-darwin19/8.3.0/../../../../../../include/c++/8.3.0',
