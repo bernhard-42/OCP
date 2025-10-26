@@ -6,9 +6,9 @@ parameters:
   py_maj: '3'
   py_min: '11'
   py_min_build:
-  - 10
-  - 11
-  - 12
+  # - 10
+  # - 11
+  # - 12
   - 13
   config_file: 'ocp.toml'
   conda_bld: '3.27.0'
@@ -16,8 +16,61 @@ parameters:
   CXX: g++-13
 
 jobs:
+# Job 1: Platform-agnostic parsing (Ubuntu only)
+- job: Agnostic_Parse
+  timeoutInMinutes: 360
+  pool:
+    vmImage: 'ubuntu-22.04'
+  variables:
+    n_cores: 2
+  steps:
+  - checkout: self
+    submodules: true
+
+  - bash: sudo apt-get update && sudo apt-get install ${{ parameters.CXX }} mesa-common-dev libegl1-mesa-dev libgl1-mesa-dev libglu1-mesa-dev freeglut3-dev
+    displayName: 'Install gl headers'
+
+  - template: micromamba-enable.yml@templates
+    parameters:
+      python: 3.12
+      mamba: 1.5
+      vmImage: 'ubuntu-22.04'
+
+  - bash: |
+      micromamba run mamba-devenv -f ${{ parameters.conda_env_file }}
+    displayName: 'Prepare conda environment'
+
+  - bash: |
+      env && \
+      micromamba activate cpp-py-bindgen && \
+      micromamba info && \
+      micromamba list && \
+      which python && \
+      env
+    displayName: 'Conda env sanity checks'
+
+  - bash: |
+      micromamba activate cpp-py-bindgen && \
+      OUTPUT=`python -c'import toml; print(toml.load("${{ parameters.config_file }}")["output_folder"])'`  && \
+      echo $OUTPUT && \
+      echo "##vso[task.setvariable variable=OUTPUT;isOutput=true]$OUTPUT"
+    displayName: 'Read output dir from the config file'
+    name: 'conf'
+
+  - bash: |
+      micromamba activate cpp-py-bindgen && \
+      cmake -DPython_ROOT_DIR=$CONDA_PREFIX -DPython3_ROOT_DIR=$CONDA_PREFIX -DPython_FIND_VIRTUALENV=ONLY -DPython3_FIND_VIRTUALENV=ONLY -B . -S . -G Ninja && \
+      cmake --build . --target pywrap-agnostic
+    displayName: 'CMake based pywrap call (agnostic)'
+    name: 'Generate_Agnostic'
+
+  - publish: platform_agnostic_tmp_parsed.pkl
+    artifact: platform_agnostic_pkl
+
+# Job 2: Platform-specific generation
 - job: ${{ parameters.name }}
   timeoutInMinutes: 360
+  dependsOn: Agnostic_Parse
   pool:
     vmImage: ${{ parameters.vmImage }}
   variables:
@@ -25,6 +78,13 @@ jobs:
   steps:
   - checkout: self
     submodules: true
+
+  - download: current
+    artifact: platform_agnostic_pkl
+
+  - bash: |
+      cp $(Pipeline.Workspace)/platform_agnostic_pkl/platform_agnostic_tmp_parsed.pkl .
+    displayName: 'Copy agnostic pkl file'
 
   - ${{ if contains(parameters.vmImage, 'Ubuntu') }}:
     - bash: sudo apt-get update && sudo apt-get install ${{ parameters.CXX }} mesa-common-dev libegl1-mesa-dev libgl1-mesa-dev libglu1-mesa-dev freeglut3-dev
@@ -51,7 +111,7 @@ jobs:
     displayName: 'Prepare conda environment'
 
   - bash: |
-      env && \ 
+      env && \
       micromamba activate cpp-py-bindgen && \
       micromamba info && \
       micromamba list && \
@@ -67,22 +127,21 @@ jobs:
     displayName: 'Read output dir from the config file'
     name: 'conf'
 
-  
   - ${{ if contains(parameters.platform, 'Windows') }}:
     - bash: |
-        micromamba create --yes --platform win-64 --no-deps --prefix ./occt  occt=7.9.0 && \ 
+        micromamba create --yes --platform win-64 --no-deps --prefix ./occt  occt=7.9.0 && \
         micromamba activate cpp-py-bindgen && \
         cmake -S . -B . -G Ninja -DPython_ROOT_DIR=$CONDA_PREFIX -DPython3_ROOT_DIR=$CONDA_PREFIX -DPython_FIND_VIRTUALENV=ONLY -DPython3_FIND_VIRTUALENV=ONLY -DOCCT_LIB_DIR=./occt/Library/bin/\*.dll -DPLATFORM=Windows && \
-        cmake --build . -- -v
-      displayName: 'CMake based pywrap call (linux to win)'
+        cmake --build . --target pywrap
+      displayName: 'CMake based pywrap call (platform-specific for Windows)'
       name: 'Generate'
 
   - ${{ else }}:
     - bash: |
         micromamba activate cpp-py-bindgen && \
         cmake -DPython_ROOT_DIR=$CONDA_PREFIX -DPython3_ROOT_DIR=$CONDA_PREFIX -DPython_FIND_VIRTUALENV=ONLY -DPython3_FIND_VIRTUALENV=ONLY -B . -S . -G Ninja && \
-        cmake --build .
-      displayName: 'CMake based pywrap call'
+        cmake --build . --target pywrap
+      displayName: 'CMake based pywrap call (platform-specific)'
       name: 'Generate'
 
   - task: CopyFiles@2
@@ -155,7 +214,7 @@ jobs:
     - ${{ if contains(parameters.vmImage_compile, 'win') }}:
       - powershell: |
           micromamba run -n cpp-py-bindgen cmake -B build -S "../$(OCP_src)" -G Ninja -DCMAKE_BUILD_TYPE=Release -DPython3_FIND_STRATEGY=LOCATION -DPython3_ROOT_DIR=%CONDA_PREFIX% -DCMAKE_LINKER=lld-link.exe
-          micromamba run -n cpp-py-bindgen cmake --build build -j 1 -- -v -k 0
+          micromamba run -n cpp-py-bindgen cmake --build build -j $(n_cores) -- -v -k 0
           micromamba run -n cpp-py-bindgen cmake -E rm -rf build\CMakeFiles
         displayName: 'Compile'
         env:
@@ -182,30 +241,30 @@ jobs:
         artifactName: OCP_${{ parameters.platform }}
       displayName: 'Publish compilation result'
 
-    - bash: |
-        micromamba activate cpp-py-bindgen && \
-        cd build && \
-        LD_DEBUG=libs python -c"import OCP"
-      displayName: 'Test'
+    # - bash: |
+    #     micromamba activate cpp-py-bindgen && \
+    #     cd build && \
+    #     LD_DEBUG=libs python -c"import OCP"
+    #   displayName: 'Test'
 
-    - bash: |
-          micromamba create -n build -y -c conda-forge python=3.11 liblief=0.14.1 conda-build anaconda-client && \
-          micromamba activate build && \
-          conda build --token $TOKEN --user cadquery --label dev -c conda-forge --override-channels conda
-      displayName: 'Build conda package'
-      condition: ne(variables['Build.Reason'], 'PullRequest')
-      env:
-        BUILD_STRING: "1"
-        PYTHON_VERSION: ${{ parameters.py_maj }}.${{ py_min }}
-        TOKEN: $(anaconda.TOKEN)
+    # - bash: |
+    #       micromamba create -n build -y -c conda-forge python=3.11 liblief=0.14.1 conda-build anaconda-client && \
+    #       micromamba activate build && \
+    #       conda build --token $TOKEN --user cadquery --label dev -c conda-forge --override-channels conda
+    #   displayName: 'Build conda package'
+    #   condition: ne(variables['Build.Reason'], 'PullRequest')
+    #   env:
+    #     BUILD_STRING: "1"
+    #     PYTHON_VERSION: ${{ parameters.py_maj }}.${{ py_min }}
+    #     TOKEN: $(anaconda.TOKEN)
 
-    - bash: |
-          micromamba create -n build -y -c conda-forge python=3.11 liblief=0.14.1 conda-build anaconda-client && \
-          micromamba activate build && \
-          conda build -c conda-forge --override-channels conda
-      displayName: 'Build conda package'
-      condition: eq(variables['Build.Reason'], 'PullRequest')
-      env:
-        BUILD_STRING: "1"
-        PYTHON_VERSION: ${{ parameters.py_maj }}.${{ py_min }}
-        TOKEN: $(anaconda.TOKEN)
+    # - bash: |
+    #       micromamba create -n build -y -c conda-forge python=3.11 liblief=0.14.1 conda-build anaconda-client && \
+    #       micromamba activate build && \
+    #       conda build -c conda-forge --override-channels conda
+    #   displayName: 'Build conda package'
+    #   condition: eq(variables['Build.Reason'], 'PullRequest')
+    #   env:
+    #     BUILD_STRING: "1"
+    #     PYTHON_VERSION: ${{ parameters.py_maj }}.${{ py_min }}
+    #     TOKEN: $(anaconda.TOKEN)

@@ -1,8 +1,14 @@
 cmake_minimum_required( VERSION 3.17 )
 project( OCP )
 
-set( N_PROC 2 CACHE STRING "Number of processes used for generating code")
+include(ProcessorCount)
 
+ProcessorCount(N_PROC)
+if(NOT N_PROC OR N_PROC EQUAL 0)
+    set(N_PROC 1)
+endif()
+
+message(STATUS "Found and use ${N_PROC} CPUs")
 
 find_package( LLVM REQUIRED )
 find_package( VTK REQUIRED
@@ -35,14 +41,6 @@ else()
         list( APPEND occt_libs ${loc} )
     endforeach()
 endif()
-
-execute_process(
-    COMMAND
-    ${Python_EXECUTABLE}
-    ${CMAKE_SOURCE_DIR}/dump_symbols.py
-    "${occt_libs}"
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-)
 
 get_target_property( LIBCLANG_PATH libclang IMPORTED_LOCATION_RELEASE )
 get_target_property( VTK_INCLUDE_DIR VTK::CommonCore INTERFACE_INCLUDE_DIRECTORIES )
@@ -78,25 +76,37 @@ endif()
 
 set(ENV{PYTHONPATH} ${CMAKE_SOURCE_DIR}/pywrap )
 
-add_custom_command(
-    OUTPUT ${CMAKE_SOURCE_DIR}/OCP/CMakeLists.txt
-    COMMAND
-        ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_SOURCE_DIR}/pywrap"
-        ${Python_EXECUTABLE}
-        -m bindgen
-        -n ${N_PROC}
-        -l ${LIBCLANG_PATH}
-        -i ${CLANG_INCLUDE_DIRS}/
-        -i ${VTK_INCLUDE_DIR}/
-        -i ${CLANG_INSTALL_PREFIX}/lib/clang/${LLVM_VERSION_MAJOR}/include/
-        -p ${CMAKE_SOURCE_DIR}
-        ${CXX_INCLUDES}
-        -i ${CMAKE_SOURCE_DIR}/extern/include
-        all ${CMAKE_SOURCE_DIR}/ocp.toml ${PLATFORM}
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-    DEPENDS ${CMAKE_SOURCE_DIR}/ocp.toml
-    USES_TERMINAL
-    COMMENT "Running pywrap"
+set(PYWRAP_BASE_COMMAND
+    ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_SOURCE_DIR}/pywrap"
+    ${Python_EXECUTABLE}
+    -m bindgen
+    -n ${N_PROC}
+    -l ${LIBCLANG_PATH}
+    -i ${CLANG_INCLUDE_DIRS}/
+    -i ${VTK_INCLUDE_DIR}/
+    -i ${CLANG_INSTALL_PREFIX}/lib/clang/${LLVM_VERSION_MAJOR}/include/
+    -p ${CMAKE_SOURCE_DIR}
+    ${CXX_INCLUDES}
+    -i ${CMAKE_SOURCE_DIR}/extern/include
 )
 
+add_custom_command(
+    OUTPUT ${CMAKE_SOURCE_DIR}/platform_agnostic_tmp_parsed.pkl
+    COMMAND ${PYWRAP_BASE_COMMAND} parse --agnostic ${CMAKE_SOURCE_DIR}/ocp.toml tmp_parsed.pkl ${PLATFORM}
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    DEPENDS ${CMAKE_SOURCE_DIR}/ocp.toml
+    USES_TERMINAL
+    COMMENT "Running pywrap agnostic"
+)
+add_custom_target(pywrap-agnostic ALL DEPENDS ${CMAKE_SOURCE_DIR}/platform_agnostic_tmp_parsed.pkl)
+
+add_custom_command(
+    OUTPUT ${CMAKE_SOURCE_DIR}/OCP/CMakeLists.txt
+    COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/dump_symbols.py "'${occt_libs}'"    
+    COMMAND ${PYWRAP_BASE_COMMAND} all ${CMAKE_SOURCE_DIR}/ocp.toml ${PLATFORM} tmp_parsed.pkl tmp_filtered.pkl
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    DEPENDS ${CMAKE_SOURCE_DIR}/ocp.toml ${CMAKE_SOURCE_DIR}/platform_agnostic_tmp_parsed.pkl
+    USES_TERMINAL
+    COMMENT "Running pywrap all"
+)
 add_custom_target(pywrap ALL DEPENDS ${CMAKE_SOURCE_DIR}/OCP/CMakeLists.txt)
