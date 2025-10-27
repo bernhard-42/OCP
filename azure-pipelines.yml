@@ -11,9 +11,9 @@ resources:
   repositories:
     - repository: templates
       type: github
-      name: CadQuery/conda-packages
-      endpoint: CadQuery
-
+      name: bernhard-42/conda-packages
+      endpoint: bernhard-42
+      
 jobs:
 # Use the new optimized pipeline with caching
 - template: build-bindings-job-new.yml
