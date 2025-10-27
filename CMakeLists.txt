@@ -72,15 +72,6 @@ string(REPLACE ">" ">;" VTK_INCLUDE_DIR ${VTK_INCLUDE_DIR})
 list(GET VTK_INCLUDE_DIR 0 VTK_INCLUDE_DIR)
 
 message( STATUS "Include dirs: ${VTK_INCLUDE_DIR}")
-message( STATUS "Include dirs: ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES}")
-
-if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
-    foreach( inc IN LISTS CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES)
-        list( APPEND CXX_INCLUDES -i ${inc}/ )
-    endforeach()
-else()
-    list( APPEND CXX_INCLUDES -i /opt/usr/local/include/c++/v1/ -i /opt/usr/local/include/ )
-endif()
 
 if(PLATFORM)
     message( STATUS "Requested platform: ${PLATFORM}")
