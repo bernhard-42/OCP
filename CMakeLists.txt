@@ -15,8 +15,14 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 
 project( OCP )
 
-set( N_PROC 2 CACHE STRING "Number of processes used for generating code")
+include(ProcessorCount)
 
+ProcessorCount(N_PROC)
+if(NOT N_PROC OR N_PROC EQUAL 0)
+    set(N_PROC 1)
+endif()
+
+message(STATUS "Found and use ${N_PROC} CPUs")
 
 find_package( LLVM REQUIRED )
 find_package( VTK REQUIRED
