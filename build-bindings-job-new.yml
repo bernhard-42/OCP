@@ -35,12 +35,11 @@ jobs:
   pool:
     vmImage: $(vmImage)
   steps:
+  - checkout: self
+    submodules: true
+
   # Check cache FIRST - if OCP source exists, we don't need symbols!
   - ${{ if eq(parameters.enable_cache, true) }}:
-    - bash: |
-        OUTPUT=$(python3 -c 'import sys; sys.path.insert(0, "."); import toml; print(toml.load("${{ parameters.config_file }}")["output_folder"])')
-        echo "##vso[task.setvariable variable=OUTPUT]$OUTPUT"
-      displayName: 'Read output dir'
 
     - task: Cache@2
       inputs:
@@ -78,6 +77,11 @@ jobs:
     displayName: 'Prepare conda environment'
     condition: ne(variables.CACHE_RESTORED, 'true')
 
+  - bash: |
+      OUTPUT=$(python3 -c 'import sys; sys.path.insert(0, "."); import toml; print(toml.load("${{ parameters.config_file }}")["output_folder"])')
+      echo "##vso[task.setvariable variable=OUTPUT]$OUTPUT"
+    displayName: 'Read output dir'
+    
   - bash: |
       source activate cpp-py-bindgen
       # Find OpenCascade libraries and run dump_symbols
@@ -136,6 +140,10 @@ jobs:
   pool:
     vmImage: $(vmImage)
   steps:
+  
+  - checkout: self
+    submodules: true
+
   # Read output directory from config (minimal Python, no conda needed)
   - bash: |
       OUTPUT=$(python3 -c 'import sys; sys.path.insert(0, "."); import toml; print(toml.load("${{ parameters.config_file }}")["output_folder"])')
@@ -279,6 +287,9 @@ jobs:
     variables:
       python_version: '${{ parameters.py_maj }}.${{ py_min }}'
     steps:
+    - checkout: self
+      submodules: true    
+    
     # Detect number of CPU cores
     - bash: |
         if [ "$(uname)" == "Darwin" ]; then
