@@ -78,7 +78,7 @@ jobs:
     condition: ne(variables.CACHE_RESTORED, 'true')
     
   - bash: |
-      source activate ocp-phase0
+      micromamba activate ocp-phase0
       # Find OpenCascade libraries based on platform
       if [ "$AGENT_OS" == "Windows_NT" ]; then
         # Windows: Library/lib/*.lib
