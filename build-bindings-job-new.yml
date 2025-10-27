@@ -1,0 +1,406 @@
+parameters:
+  name: 'Build_OCP'
+  config_file: 'ocp.toml'
+  conda_env_file: 'env.yml'
+  py_maj: '3'
+  py_min_build:
+  - '10'
+  - '11'
+  - '12'
+  - '13'
+  enable_cache: true
+
+jobs:
+# ============================================================================
+# Job 1: Dump Symbols - Extract symbols from OpenCascade libraries
+# Checks cache first - if OCP source is cached, skips symbol extraction
+# ============================================================================
+- job: DumpSymbols
+  displayName: 'Dump Symbols'
+  timeoutInMinutes: 120
+  strategy:
+    matrix:
+      Linux:
+        vmImage: 'ubuntu-22.04'
+        platform_name: 'linux'
+        target_platform: 'Linux'
+      macOS:
+        vmImage: 'macos-latest'
+        platform_name: 'mac'
+        target_platform: 'OSX'
+      Windows:
+        vmImage: 'windows-latest'
+        platform_name: 'win'
+        target_platform: 'Windows'
+  pool:
+    vmImage: $(vmImage)
+  steps:
+  # Check cache FIRST - if OCP source exists, we don't need symbols!
+  - ${{ if eq(parameters.enable_cache, true) }}:
+    - bash: |
+        OUTPUT=$(python3 -c 'import sys; sys.path.insert(0, "."); import toml; print(toml.load("${{ parameters.config_file }}")["output_folder"])')
+        echo "##vso[task.setvariable variable=OUTPUT]$OUTPUT"
+      displayName: 'Read output dir'
+
+    - task: Cache@2
+      inputs:
+        key: 'ocp-src-v1 | "$(target_platform)" | ${{ parameters.config_file }} | pywrap/bindgen/**/*.py | ${{ parameters.conda_env_file }}'
+        path: $(OUTPUT)
+        restoreKeys: |
+          ocp-src-v1 | "$(target_platform)"
+        cacheHitVar: CACHE_RESTORED
+      displayName: 'Check if OCP source cached for $(target_platform)'
+
+    - bash: |
+        if [ "$(CACHE_RESTORED)" == "true" ]; then
+          echo "======================================"
+          echo "✓ OCP source is cached!"
+          echo "======================================"
+          echo "Skipping symbol extraction for $(platform_name)"
+          echo "Job 2 will use cached source"
+        else
+          echo "======================================"
+          echo "✗ OCP source NOT cached"
+          echo "======================================"
+          echo "Will extract symbols for $(platform_name)"
+        fi
+      displayName: 'Cache check result'
+
+  # All steps below only run if cache MISS (or caching disabled)
+  - template: micromamba-enable.yml@templates
+    parameters:
+      python: 3.13
+      mamba: 1.5
+      vmImage: $(vmImage)
+    condition: ne(variables.CACHE_RESTORED, 'true')
+
+  - bash: |
+      micromamba run mamba-devenv -f ${{ parameters.conda_env_file }}
+    displayName: 'Prepare conda environment'
+    condition: ne(variables.CACHE_RESTORED, 'true')
+
+  - bash: |
+      source activate cpp-py-bindgen
+      # Find OpenCascade libraries and run dump_symbols
+      OCCT_LIBS=$(find $CONDA_PREFIX/lib -name "*TK*.so" -o -name "*TK*.dylib" | tr '\n' ';' | sed 's/;$//')
+      python dump_symbols.py "$OCCT_LIBS"
+      ls -la symbols_mangled_*.dat
+    displayName: 'Run dump_symbols.py (Linux/macOS)'
+    condition: and(ne(variables['Agent.OS'], 'Windows_NT'), ne(variables.CACHE_RESTORED, 'true'))
+
+  - script: |
+      call activate cpp-py-bindgen
+      python -c "import glob; import sys; libs=';'.join(glob.glob(sys.prefix+'\\Library\\lib\\TK*.lib')); print(libs)" > libs.txt
+      set /p LIBS=<libs.txt
+      python dump_symbols.py "%LIBS%"
+      dir symbols_mangled_*.dat
+    displayName: 'Run dump_symbols.py (Windows)'
+    condition: and(eq(variables['Agent.OS'], 'Windows_NT'), ne(variables.CACHE_RESTORED, 'true'))
+
+  - task: CopyFiles@2
+    inputs:
+      contents: 'symbols_mangled_*.dat'
+      targetFolder: $(Build.ArtifactStagingDirectory)
+    displayName: 'Copy symbol file to staging'
+    condition: ne(variables.CACHE_RESTORED, 'true')
+
+  - publish: $(Build.ArtifactStagingDirectory)
+    artifact: symbols_$(platform_name)
+    displayName: 'Publish symbol file'
+    condition: ne(variables.CACHE_RESTORED, 'true')
+
+# ============================================================================
+# Job 2: Generate Bindings - Run pywrap to generate C++ code
+# Runs after Job 1 (if it ran), or standalone if cache enabled
+# ============================================================================
+- job: GenerateBindings
+  displayName: 'Generate Bindings'
+  dependsOn:
+  - DumpSymbols
+  condition: in(dependencies.DumpSymbols.result, 'Succeeded', 'Skipped')
+  timeoutInMinutes: 360
+  strategy:
+    matrix:
+      Linux:
+        vmImage: 'ubuntu-22.04'
+        target_platform: 'Linux'
+        symbol_artifact: 'symbols_linux'
+      Windows_CrossCompile:
+        vmImage: 'ubuntu-22.04'
+        target_platform: 'Windows'
+        symbol_artifact: 'symbols_win'
+        install_mingw: true
+      macOS:
+        vmImage: 'macos-latest'
+        target_platform: 'OSX'
+        symbol_artifact: 'symbols_mac'
+  pool:
+    vmImage: $(vmImage)
+  steps:
+  # Read output directory from config (minimal Python, no conda needed)
+  - bash: |
+      OUTPUT=$(python3 -c 'import sys; sys.path.insert(0, "."); import toml; print(toml.load("${{ parameters.config_file }}")["output_folder"])')
+      echo $OUTPUT
+      echo "##vso[task.setvariable variable=OUTPUT;isOutput=true]$OUTPUT"
+      echo "##vso[task.setvariable variable=OUTPUT]$OUTPUT"
+    displayName: 'Read output dir from config'
+    name: 'conf'
+
+  # Cache: Try to restore cached OCP source (FIRST THING!)
+  - ${{ if eq(parameters.enable_cache, true) }}:
+    - task: Cache@2
+      inputs:
+        key: 'ocp-src-v1 | "$(target_platform)" | ${{ parameters.config_file }} | pywrap/bindgen/**/*.py | ${{ parameters.conda_env_file }}'
+        path: $(OUTPUT)
+        cacheHitVar: CACHE_RESTORED
+      displayName: 'Check cache for $(target_platform)'
+
+  # Show cache status early
+  - bash: |
+      if [ "$(CACHE_RESTORED)" == "true" ]; then
+        echo "======================================"
+        echo "✓ CACHE HIT!"
+        echo "======================================"
+        echo "Using cached OCP source for $(target_platform)"
+        echo "Skipping symbol download and code generation"
+        echo ""
+        ls -lh $(OUTPUT) | head -20
+      else
+        echo "======================================"
+        echo "✗ CACHE MISS"
+        echo "======================================"
+        echo "Will generate OCP source for $(target_platform)"
+      fi
+    displayName: 'Cache status'
+
+  # ========== Everything below only runs on cache MISS ==========
+
+  # Download symbol file for target platform (Job 1 publishes it only if not cached)
+  - download: current
+    artifact: $(symbol_artifact)
+    displayName: 'Download symbol file'
+    condition: ne(variables.CACHE_RESTORED, 'true')
+
+  # Install system dependencies
+  - bash: sudo apt-get update && sudo apt-get install g++ mesa-common-dev libgl1-mesa-dev libglu1-mesa-dev freeglut3-dev
+    displayName: 'Install dependencies (Ubuntu)'
+    condition: and(succeeded(), contains(variables['vmImage'], 'ubuntu'), ne(variables.CACHE_RESTORED, 'true'))
+
+  - bash: sudo apt-get install -y mingw-w64
+    displayName: 'Install MinGW for cross-compilation'
+    condition: and(succeeded(), eq(variables['install_mingw'], 'true'), ne(variables.CACHE_RESTORED, 'true'))
+
+  - bash: |
+      sudo find /Library/Developer/CommandLineTools/SDKs/ -name "OpenGL.framework" || true
+      ln -s "$(xcrun --sdk macosx --show-sdk-path)/System/Library/Frameworks/OpenGL.framework/Headers" /usr/local/include/OpenGL || true
+    displayName: 'Setup OpenGL (macOS)'
+    condition: and(succeeded(), contains(variables['vmImage'], 'macos'), ne(variables.CACHE_RESTORED, 'true'))
+
+  # Setup conda
+  - template: micromamba-enable.yml@templates
+    parameters:
+      python: 3.13
+      mamba: 1.5
+      vmImage: $(vmImage)
+    condition: ne(variables.CACHE_RESTORED, 'true')
+
+  - bash: micromamba run mamba-devenv -f ${{ parameters.conda_env_file }}
+    displayName: 'Prepare conda environment'
+    condition: ne(variables.CACHE_RESTORED, 'true')
+
+  - bash: |
+      source activate cpp-py-bindgen
+      conda info -a
+      conda list
+      which python
+    displayName: 'Conda env sanity checks'
+    condition: ne(variables.CACHE_RESTORED, 'true')
+
+  # Copy symbol file to build directory
+  - bash: |
+      cp ../$(symbol_artifact)/* .
+    displayName: 'Copy symbol file'
+    condition: ne(variables.CACHE_RESTORED, 'true')
+
+  # Generate bindings (only if cache miss)
+  - bash: |
+      source activate cpp-py-bindgen
+      pip install .
+      # Add Windows cross-compilation includes if needed
+      if [ "$(target_platform)" == "Windows" ]; then
+        CLANG_VER=$(ls $CONDA_PREFIX/lib/clang/ | head -1)
+        pywrap \
+          -i $CONDA_PREFIX/lib/clang/$CLANG_VER/include/ \
+          -i $CONDA_PREFIX/include/ \
+          -i $CONDA_PREFIX/include/vtk-*/ \
+          -i /usr/x86_64-w64-mingw32/include \
+          all ${{ parameters.config_file }} $(target_platform)
+      else
+        pywrap all ${{ parameters.config_file }} $(target_platform)
+      fi
+    displayName: 'Generate bindings (parse + transform + generate)'
+    condition: ne(variables.CACHE_RESTORED, 'true')
+
+  # Copy pickle files to output (only if generated)
+  - task: CopyFiles@2
+    inputs:
+      contents: '*.pkl'
+      targetFolder: $(OUTPUT)
+    displayName: 'Copy pkl outputs'
+    condition: ne(variables.CACHE_RESTORED, 'true')
+
+  # Publish generated source code (from cache or newly generated)
+  - publish: $(OUTPUT)
+    artifact: OCP_src_$(target_platform)
+    displayName: 'Publish generated source'
+
+# ============================================================================
+# Job 3: Compile Bindings - Compile generated C++ for each Python version
+# ============================================================================
+- ${{ each py_min in parameters.py_min_build }}:
+  - job: CompileBindings_${{ py_min }}
+    displayName: 'Compile Bindings Py${{ parameters.py_maj }}.${{ py_min }}'
+    dependsOn: GenerateBindings
+    timeoutInMinutes: 360
+    strategy:
+      matrix:
+        Linux:
+          vmImage: 'ubuntu-22.04'
+          source_platform: 'Linux'
+          CXX: 'g++'
+        macOS:
+          vmImage: 'macos-latest'
+          source_platform: 'OSX'
+          CXX: 'clang++'
+        Windows:
+          vmImage: 'windows-latest'
+          source_platform: 'Windows'
+          CXX: 'cl.exe'
+    pool:
+      vmImage: $(vmImage)
+    variables:
+      python_version: '${{ parameters.py_maj }}.${{ py_min }}'
+    steps:
+    # Detect number of CPU cores
+    - bash: |
+        if [ "$(uname)" == "Darwin" ]; then
+          CORES=$(sysctl -n hw.ncpu)
+        else
+          CORES=$(nproc)
+        fi
+        echo "Detected $CORES CPU cores"
+        echo "##vso[task.setvariable variable=NUM_CORES]$CORES"
+      displayName: 'Detect CPU cores (Linux/macOS)'
+      condition: ne(variables['Agent.OS'], 'Windows_NT')
+
+    - script: |
+        echo "Detected %NUMBER_OF_PROCESSORS% CPU cores"
+        echo ##vso[task.setvariable variable=NUM_CORES]%NUMBER_OF_PROCESSORS%
+      displayName: 'Detect CPU cores (Windows)'
+      condition: eq(variables['Agent.OS'], 'Windows_NT')
+
+    # Download generated source code
+    - download: current
+      artifact: OCP_src_$(source_platform)
+      displayName: 'Download generated source'
+
+    # Install system dependencies
+    - bash: sudo apt-get update && sudo apt-get install g++ mesa-common-dev libgl1-mesa-dev libglu1-mesa-dev freeglut3-dev
+      displayName: 'Install dependencies (Ubuntu)'
+      condition: contains(variables['vmImage'], 'ubuntu')
+
+    - bash: |
+        sudo find /Library/Developer/CommandLineTools/SDKs/ -name "OpenGL.framework" || true
+        ln -s "$(xcrun --sdk macosx --show-sdk-path)/System/Library/Frameworks/OpenGL.framework/Headers" /usr/local/include/OpenGL || true
+      displayName: 'Setup OpenGL (macOS)'
+      condition: contains(variables['vmImage'], 'macos')
+
+    - bash: ls "C:/Program Files (x86)/Microsoft Visual Studio/2019/Enterprise/VC/Auxiliary/Build" || ls "C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Auxiliary/Build" || true
+      displayName: 'Find vcvars64 (Windows)'
+      condition: contains(variables['vmImage'], 'windows')
+
+    # Setup micromamba
+    - template: micromamba-enable.yml@templates
+      parameters:
+        python: $(python_version)
+        mamba: 1.5
+        vmImage: $(vmImage)
+
+    # Create environment with specific Python version
+    - bash: |
+        micromamba create -n build-env python=$(python_version) -y
+        eval "$(micromamba shell hook --shell bash)"
+        micromamba activate build-env
+        micromamba install -c conda-forge opencascade vtk ninja cmake pybind11 -y
+      displayName: 'Create build environment (Linux/macOS)'
+      condition: ne(variables['Agent.OS'], 'Windows_NT')
+
+    - script: |
+        call micromamba create -n build-env python=$(python_version) -y
+        call micromamba activate build-env
+        call micromamba install -c conda-forge opencascade vtk ninja cmake pybind11 -y
+      displayName: 'Create build environment (Windows)'
+      condition: eq(variables['Agent.OS'], 'Windows_NT')
+
+    # Compile on Linux
+    - bash: |
+        eval "$(micromamba shell hook --shell bash)"
+        micromamba activate build-env
+        echo "Building with $(NUM_CORES) parallel jobs"
+        cmake -B build -S "../OCP_src_$(source_platform)" -G Ninja -DCMAKE_BUILD_TYPE=Release
+        cmake --build build -j $(NUM_CORES) -- -k 0
+        rm -rf build/CMakeFiles
+      displayName: 'Compile (Linux)'
+      condition: contains(variables['vmImage'], 'ubuntu')
+      env:
+        CXX: $(CXX)
+
+    # Compile on macOS
+    - bash: |
+        eval "$(micromamba shell hook --shell bash)"
+        micromamba activate build-env
+        cp -rf opencascade $CONDA_PREFIX/include || true
+        echo "Building with $(NUM_CORES) parallel jobs"
+        cmake -B build -S "../OCP_src_$(source_platform)" -G Ninja -DCMAKE_BUILD_TYPE=Release
+        cmake --build build -j $(NUM_CORES) -- -k 0
+        rm -rf build/CMakeFiles
+      displayName: 'Compile (macOS)'
+      condition: contains(variables['vmImage'], 'macos')
+      env:
+        CXX: $(CXX)
+
+    # Compile on Windows
+    - script: |
+        call "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Auxiliary\\Build\\vcvars64.bat" || call "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Enterprise\\VC\\Auxiliary\\Build\\vcvars64.bat"
+        call micromamba activate build-env
+        echo Building with %NUM_CORES% parallel jobs
+        cmake -B build -S "../OCP_src_$(source_platform)" -G Ninja -DCMAKE_BUILD_TYPE=Release
+        cmake --build build -j %NUM_CORES% -- -k 0
+        rmdir /S /Q build\CMakeFiles
+      displayName: 'Compile (Windows)'
+      condition: contains(variables['vmImage'], 'windows')
+      env:
+        CXX: $(CXX)
+
+    # Test the compiled module
+    - bash: |
+        eval "$(micromamba shell hook --shell bash)"
+        micromamba activate build-env
+        cd build
+        python -c "import OCP; print('OCP import successful')"
+      displayName: 'Test import (Linux/macOS)'
+      condition: ne(variables['Agent.OS'], 'Windows_NT')
+
+    - script: |
+        call micromamba activate build-env
+        cd build
+        python -c "import OCP" && echo OCP import successful
+      displayName: 'Test import (Windows)'
+      condition: eq(variables['Agent.OS'], 'Windows_NT')
+
+    # Publish compiled artifacts
+    - task: PublishBuildArtifacts@1
+      inputs:
+        pathtoPublish: 'build'
+        artifactName: OCP_$(source_platform)_py${{ parameters.py_maj }}_${{ py_min }}
+      displayName: 'Publish compiled bindings'
