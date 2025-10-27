@@ -68,8 +68,8 @@ jobs:
   # All steps below only run if cache MISS (or caching disabled)
   - template: micromamba-enable.yml@templates
     parameters:
-      python: 3.13
-      mamba: 2
+      python: 3.11
+      mamba: 1.5
       vmImage: $(vmImage)
 
   - bash: |
@@ -206,8 +206,8 @@ jobs:
   # Setup conda
   - template: micromamba-enable.yml@templates
     parameters:
-      python: 3.13
-      mamba: 2
+      python: 3.11
+      mamba: 1.5
       vmImage: $(vmImage)
 
   - bash: micromamba run mamba-devenv -f ${{ parameters.conda_env_file }}
