@@ -38,7 +38,6 @@ jobs:
   - checkout: self
     submodules: true
 
-  # All steps below run unconditionally - Job 1 always generates symbols
   - template: micromamba-enable.yml@templates
     parameters:
       python: 3.11
@@ -62,12 +61,6 @@ jobs:
       python dump_symbols.py "$OCCT_LIBS"
       ls -la symbols_mangled_*.dat
     displayName: 'Run dump_symbols.py'
-
-  - task: CopyFiles@2
-    inputs:
-      contents: 'symbols_mangled_*.dat'
-      targetFolder: $(Build.ArtifactStagingDirectory)
-    displayName: 'Copy symbol file to staging'
 
   - publish: $(Build.ArtifactStagingDirectory)
     artifact: symbols_$(platform_name)
