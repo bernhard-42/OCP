@@ -38,34 +38,7 @@ jobs:
   - checkout: self
     submodules: true
 
-  # Check cache FIRST - if OCP source exists, we don't need symbols!
-  - ${{ if eq(parameters.enable_cache, true) }}:
-
-    - task: Cache@2
-      inputs:
-        key: 'ocp-src-v1 | "$(target_platform)" | ${{ parameters.config_file }} | pywrap/bindgen/**/*.py | ${{ parameters.conda_env_file }}'
-        path: $(OUTPUT)
-        restoreKeys: |
-          ocp-src-v1 | "$(target_platform)"
-        cacheHitVar: CACHE_RESTORED
-      displayName: 'Check if OCP source cached for $(target_platform)'
-
-    - bash: |
-        if [ "$(CACHE_RESTORED)" == "true" ]; then
-          echo "======================================"
-          echo "✓ OCP source is cached!"
-          echo "======================================"
-          echo "Skipping symbol extraction for $(platform_name)"
-          echo "Job 2 will use cached source"
-        else
-          echo "======================================"
-          echo "✗ OCP source NOT cached"
-          echo "======================================"
-          echo "Will extract symbols for $(platform_name)"
-        fi
-      displayName: 'Cache check result'
-
-  # All steps below only run if cache MISS (or caching disabled)
+  # All steps below run unconditionally - Job 1 always generates symbols
   - template: micromamba-enable.yml@templates
     parameters:
       python: 3.11
@@ -75,8 +48,7 @@ jobs:
   - bash: |
       micromamba run mamba-devenv -f env.yml
     displayName: 'Prepare conda environment'
-    condition: ne(variables.CACHE_RESTORED, 'true')
-    
+
   - bash: |
       micromamba activate ocp-phase0
       # Find OpenCascade libraries based on platform
@@ -90,29 +62,26 @@ jobs:
       python dump_symbols.py "$OCCT_LIBS"
       ls -la symbols_mangled_*.dat
     displayName: 'Run dump_symbols.py'
-    condition: ne(variables.CACHE_RESTORED, 'true')
 
   - task: CopyFiles@2
     inputs:
       contents: 'symbols_mangled_*.dat'
       targetFolder: $(Build.ArtifactStagingDirectory)
     displayName: 'Copy symbol file to staging'
-    condition: ne(variables.CACHE_RESTORED, 'true')
 
   - publish: $(Build.ArtifactStagingDirectory)
     artifact: symbols_$(platform_name)
     displayName: 'Publish symbol file'
-    condition: ne(variables.CACHE_RESTORED, 'true')
 
 # ============================================================================
 # Job 2: Generate Bindings - Run pywrap to generate C++ code
-# Runs after Job 1 (if it ran), or standalone if cache enabled
+# Runs after Job 1. If OCP source is cached, skips symbol download and generation
 # ============================================================================
 - job: GenerateBindings
   displayName: 'Generate Bindings'
   dependsOn:
   - DumpSymbols
-  condition: in(dependencies.DumpSymbols.result, 'Succeeded', 'Skipped')
+  condition: succeeded()
   timeoutInMinutes: 360
   strategy:
     matrix:
