@@ -72,6 +72,10 @@ jobs:
       python: 3.13
       mamba: 1.5
       vmImage: $(vmImage)
+
+  - bash: |
+      micromamba install -n base -c conda-forge mamba-devenv -y
+    displayName: 'Install mamba-devenv'
     condition: ne(variables.CACHE_RESTORED, 'true')
 
   - bash: |
@@ -202,6 +206,10 @@ jobs:
       python: 3.13
       mamba: 1.5
       vmImage: $(vmImage)
+
+  - bash: |
+      micromamba install -n base -c conda-forge mamba-devenv -y
+    displayName: 'Install mamba-devenv'
     condition: ne(variables.CACHE_RESTORED, 'true')
 
   - bash: micromamba run mamba-devenv -f ${{ parameters.conda_env_file }}
