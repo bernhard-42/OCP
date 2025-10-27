@@ -73,7 +73,7 @@ jobs:
       vmImage: $(vmImage)
 
   - bash: |
-      micromamba run mamba-devenv -f ${{ parameters.conda_env_file }}
+      micromamba run mamba-devenv -f env.yml
     displayName: 'Prepare conda environment'
     condition: ne(variables.CACHE_RESTORED, 'true')
 
