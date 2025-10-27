@@ -1,4 +1,18 @@
 cmake_minimum_required( VERSION 3.17 )
+
+# Ensure using clang
+set(CMAKE_C_COMPILER "$ENV{CONDA_PREFIX}/bin/clang" CACHE STRING "C compiler" FORCE)
+set(CMAKE_CXX_COMPILER "$ENV{CONDA_PREFIX}/bin/clang++" CACHE STRING "C++ compiler" FORCE)
+
+# Ensure CMake doesn't use system paths
+set(CMAKE_FIND_ROOT_PATH "$ENV{CONDA_PREFIX}")
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+
+# Use libc++ instead of libstdc++
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
+
 project( OCP )
 
 set( N_PROC 2 CACHE STRING "Number of processes used for generating code")
