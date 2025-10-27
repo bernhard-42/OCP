@@ -22,6 +22,8 @@ dependencies:
   - tqdm
   - toposort
   - py-lief
+  - libcxx
+  - libcxx-devel
   {% else %}
   - cxx-compiler
   - tbb-devel # [win]
