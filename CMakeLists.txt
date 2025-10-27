@@ -123,13 +123,11 @@ add_custom_command(
         ${Python_EXECUTABLE}
         -m bindgen
         -n ${N_PROC}
-        -l ${LIBCLANG_PATH}
         -i ${CLANG_INCLUDE_DIRS}/
         -i ${VTK_INCLUDE_DIR}/
         -i ${CLANG_INSTALL_PREFIX}/lib/clang/${LLVM_VERSION_MAJOR}/include/
         -p ${CMAKE_SOURCE_DIR}
         ${CXX_INCLUDES}
-        -i ${CMAKE_SOURCE_DIR}/extern/include
         all ${CMAKE_SOURCE_DIR}/ocp.toml ${PLATFORM}
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     DEPENDS ${CMAKE_SOURCE_DIR}/ocp.toml
