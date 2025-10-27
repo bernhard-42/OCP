@@ -76,29 +76,21 @@ jobs:
       micromamba run mamba-devenv -f env.yml
     displayName: 'Prepare conda environment'
     condition: ne(variables.CACHE_RESTORED, 'true')
-
-  - bash: |
-      OUTPUT=$(python3 -c 'import sys; sys.path.insert(0, "."); import toml; print(toml.load("${{ parameters.config_file }}")["output_folder"])')
-      echo "##vso[task.setvariable variable=OUTPUT]$OUTPUT"
-    displayName: 'Read output dir'
     
   - bash: |
-      source activate cpp-py-bindgen
-      # Find OpenCascade libraries and run dump_symbols
-      OCCT_LIBS=$(find $CONDA_PREFIX/lib -name "*TK*.so" -o -name "*TK*.dylib" | tr '\n' ';' | sed 's/;$//')
+      source activate ocp-phase0
+      # Find OpenCascade libraries based on platform
+      if [ "$AGENT_OS" == "Windows_NT" ]; then
+        # Windows: Library/lib/*.lib
+        OCCT_LIBS=$(find $CONDA_PREFIX/Library/lib -name "*TK*.lib" 2>/dev/null | tr '\n' ';' | sed 's/;$//')
+      else
+        # Linux/macOS: lib/*.so or lib/*.dylib
+        OCCT_LIBS=$(find $CONDA_PREFIX/lib -name "*TK*.so" -o -name "*TK*.dylib" | tr '\n' ';' | sed 's/;$//')
+      fi
       python dump_symbols.py "$OCCT_LIBS"
       ls -la symbols_mangled_*.dat
-    displayName: 'Run dump_symbols.py (Linux/macOS)'
-    condition: and(ne(variables['Agent.OS'], 'Windows_NT'), ne(variables.CACHE_RESTORED, 'true'))
-
-  - script: |
-      call activate cpp-py-bindgen
-      python -c "import glob; import sys; libs=';'.join(glob.glob(sys.prefix+'\\Library\\lib\\TK*.lib')); print(libs)" > libs.txt
-      set /p LIBS=<libs.txt
-      python dump_symbols.py "%LIBS%"
-      dir symbols_mangled_*.dat
-    displayName: 'Run dump_symbols.py (Windows)'
-    condition: and(eq(variables['Agent.OS'], 'Windows_NT'), ne(variables.CACHE_RESTORED, 'true'))
+    displayName: 'Run dump_symbols.py'
+    condition: ne(variables.CACHE_RESTORED, 'true')
 
   - task: CopyFiles@2
     inputs:
