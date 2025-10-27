@@ -52,11 +52,12 @@ jobs:
       micromamba activate ocp-phase0
       # Find OpenCascade libraries based on platform
       if [ "$AGENT_OS" == "Windows_NT" ]; then
-        # Windows: Library/lib/*.lib
-        OCCT_LIBS=$(find $CONDA_PREFIX/Library/lib -name "*TK*.lib" 2>/dev/null | tr '\n' ';' | sed 's/;$//')
+        # Windows: Convert Windows path to Git Bash path
+        CONDA_PREFIX_UNIX=$(cygpath "$CONDA_PREFIX")
+        OCCT_LIBS=$(find "$CONDA_PREFIX_UNIX/Library/lib" -name "*TK*.lib" 2>/dev/null | tr '\n' ';' | sed 's/;$//')
       else
         # Linux/macOS: lib/*.so or lib/*.dylib
-        OCCT_LIBS=$(find $CONDA_PREFIX/lib -name "*TK*.so" -o -name "*TK*.dylib" | tr '\n' ';' | sed 's/;$//')
+        OCCT_LIBS=$(find "$CONDA_PREFIX/lib" -name "*TK*.so" -o -name "*TK*.dylib" | tr '\n' ';' | sed 's/;$//')
       fi
       python dump_symbols.py "$OCCT_LIBS"
       ls -la symbols_mangled_*.dat
