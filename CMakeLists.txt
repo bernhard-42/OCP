@@ -94,7 +94,25 @@ else()
     else()
         set(PLATFORM Linux)
     endif()
+    message( STATUS "Set platform: ${PLATFORM}")
 endif()
+
+if(${PLATFORM} STREQUAL "OSX")
+    list( APPEND CXX_INCLUDES 
+        -i /opt/usr/local/include/c++/v1/ 
+        -i /opt/usr/local/include/ 
+    )
+elseif(${PLATFORM} STREQUAL "Windows")
+    list(APPEND CXX_INCLUDES
+        -i /usr/x86_64-w64-mingw32/include
+    )
+else()
+     list(APPEND CXX_INCLUDES
+        -i $ENV{CONDA_PREFIX}/include/c++
+    )   
+endif()
+
+message( STATUS "CXX_INCLUDES: ${CXX_INCLUDES}")
 
 set(ENV{PYTHONPATH} ${CMAKE_SOURCE_DIR}/pywrap )
 
