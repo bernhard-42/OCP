@@ -52,7 +52,6 @@ jobs:
       python: 3.11
       mamba: 1.5
       vmImage: $(vmImage)
-    condition: ne(variables.SYMBOLS_CACHED, 'true')
 
   - bash: |
       micromamba run mamba-devenv -f env.yml
