@@ -38,32 +38,63 @@ jobs:
   - checkout: self
     submodules: true
 
+  # Cache symbol files to skip extraction (saves ~5 min)
+  - ${{ if eq(parameters.enable_cache, true) }}:
+    - task: Cache@2
+      inputs:
+        key: 'symbols-v1 | "$(target_platform)" | env.yml | dump_symbols.py'
+        path: $(Pipeline.Workspace)/symbols_cache
+        cacheHitVar: SYMBOLS_CACHED
+      displayName: 'Cache symbol files'
+
   - template: micromamba-enable.yml@templates
     parameters:
       python: 3.11
       mamba: 1.5
       vmImage: $(vmImage)
+    condition: ne(variables.SYMBOLS_CACHED, 'true')
 
   - bash: |
       micromamba run mamba-devenv -f env.yml
     displayName: 'Prepare conda environment'
+    condition: ne(variables.SYMBOLS_CACHED, 'true')
 
   - bash: |
       micromamba activate ocp-phase0
-      # Find OpenCascade libraries based on platform
-      if [ "$AGENT_OS" == "Windows_NT" ]; then
-        # Windows: Convert Windows path to Git Bash path
-        CONDA_PREFIX_UNIX=$(cygpath "$CONDA_PREFIX")
-        OCCT_LIBS=$(find "$CONDA_PREFIX_UNIX/Library/lib" -name "*TK*.lib" 2>/dev/null | tr '\n' ';' | sed 's/;$//')
-      else
-        # Linux/macOS: lib/*.so or lib/*.dylib
-        OCCT_LIBS=$(find "$CONDA_PREFIX/lib" -name "*TK*.so" -o -name "*TK*.dylib" | tr '\n' ';' | sed 's/;$//')
-      fi
+      # Find OpenCascade libraries: lib/*.so or lib/*.dylib
+      OCCT_LIBS=$(find "$CONDA_PREFIX/lib" -name "*TK*.so" -o -name "*TK*.dylib" | tr '\n' ';' | sed 's/;$//')
       python dump_symbols.py "$OCCT_LIBS"
+      # Copy to cache directory for post-job cache save
+      mkdir -p $(Pipeline.Workspace)/symbols_cache
+      cp symbols_mangled_*.dat $(Pipeline.Workspace)/symbols_cache/
       ls -la symbols_mangled_*.dat
-    displayName: 'Run dump_symbols.py'
+    displayName: 'Run dump_symbols.py (Linux/macOS)'
+    condition: and(ne(variables['Agent.OS'], 'Windows_NT'), ne(variables.SYMBOLS_CACHED, 'true'))
 
-  - publish: $(Build.ArtifactStagingDirectory)
+  - script: |
+      call micromamba activate ocp-phase0
+      python -c "import glob; import os; print(';'.join(glob.glob(os.path.join(os.environ['CONDA_PREFIX'], 'Library', 'lib', 'TK*.lib'))))" > libs.txt
+      set /p OCCT_LIBS=<libs.txt
+      python dump_symbols.py "%OCCT_LIBS%"
+      dir symbols_mangled_*.dat
+      mkdir $(Pipeline.Workspace)\symbols_cache
+      copy symbols_mangled_*.dat $(Pipeline.Workspace)\symbols_cache\
+    displayName: 'Run dump_symbols.py (Windows)'
+    condition: and(eq(variables['Agent.OS'], 'Windows_NT'), ne(variables.SYMBOLS_CACHED, 'true'))
+
+  # Copy from cache if restored (Linux/macOS)
+  - bash: |
+      cp $(Pipeline.Workspace)/symbols_cache/symbols_mangled_*.dat .
+    displayName: 'Restore symbols from cache (Linux/macOS)'
+    condition: and(ne(variables['Agent.OS'], 'Windows_NT'), eq(variables.SYMBOLS_CACHED, 'true'))
+
+  # Copy from cache if restored (Windows)
+  - script: |
+      copy $(Pipeline.Workspace)\symbols_cache\symbols_mangled_*.dat .
+    displayName: 'Restore symbols from cache (Windows)'
+    condition: and(eq(variables['Agent.OS'], 'Windows_NT'), eq(variables.SYMBOLS_CACHED, 'true'))
+
+  - publish: $(Build.SourcesDirectory)
     artifact: symbols_$(platform_name)
     displayName: 'Publish symbol file'
 
@@ -116,24 +147,6 @@ jobs:
         path: $(OUTPUT)
         cacheHitVar: CACHE_RESTORED
       displayName: 'Check cache for $(target_platform)'
-
-  # Show cache status early
-  - bash: |
-      if [ "$(CACHE_RESTORED)" == "true" ]; then
-        echo "======================================"
-        echo "✓ CACHE HIT!"
-        echo "======================================"
-        echo "Using cached OCP source for $(target_platform)"
-        echo "Skipping symbol download and code generation"
-        echo ""
-        ls -lh $(OUTPUT) | head -20
-      else
-        echo "======================================"
-        echo "✗ CACHE MISS"
-        echo "======================================"
-        echo "Will generate OCP source for $(target_platform)"
-      fi
-    displayName: 'Cache status'
 
   # ========== Everything below only runs on cache MISS ==========
 
