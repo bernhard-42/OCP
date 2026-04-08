@@ -15,7 +15,9 @@ exclude_namespaces = [
 "BVH",
 "OpenGl",
 "OpenGl_HashMapInitializer",
-"Graphic3d_TransformUtils"
+"Graphic3d_TransformUtils",
+"GeomGridEval",
+"occ"
 ]
 
 modules = [
@@ -56,7 +58,6 @@ modules = [
 "Adaptor2d",
 "Geom2d",
 "Geom2dAdaptor",
-"Geom2dEvaluator",
 "LProp",
 "Geom2dLProp",
 "TColGeom2d",
@@ -65,7 +66,6 @@ modules = [
 "GProp",
 "Geom",
 "GeomAdaptor",
-"GeomEvaluator",
 "GeomLProp",
 "LProp3d",
 "TColGeom",
@@ -84,6 +84,9 @@ modules = [
 "GCPnts",
 "Geom2dConvert",
 "GeomConvert",
+"GeomGridEval",
+"GeomHash",
+"Geom2dHash",
 "GeomLib",
 "GeomProjLib",
 "GeomTools",
@@ -164,6 +167,8 @@ modules = [
 "ShapeProcessAPI",
 "ShapeUpgrade",
 "Contap",
+"HelixGeom",
+"HelixBRep",
 "HLRAlgo",
 "HLRAppli",
 "HLRBRep",
@@ -293,6 +298,7 @@ modules = [
 "StepAP209",
 "StepAP214",
 "StepAP242",
+"StepTidy",
 "StepToGeom",
 "StepToTopoDS",
 "TopoDSToStep",
@@ -369,8 +375,8 @@ exceptions = ["Standard_Failure"]
 
 module_mapping = "lambda x: Path(x).splitpath()[-1].split('.')[0].split('_')[0]"
 
-byref_types = ["Standard_Real","Standard_Integer","Standard_Boolean"]
-byref_types_smart_ptr = ["opencascade::handle", "handle", "Handle"]
+byref_types = ["double","int","bool"]
+byref_types_smart_ptr = ["opencascade::handle", "occ::handle", "handle", "Handle"]
 
 parsing_header = '''#pragma clang diagnostic ignored "-Wmacro-redefined"
 class Adaptor2d_Curve2d;
@@ -424,13 +430,17 @@ class Adaptor3d_Surface;
 
 [Attributes]
 
-    __version__ = "7.9.3.1"
+    __version__ = "8.0.0.0"
 
 [Modules]
 
     [Modules.gp]
 
         exclude_typedefs = ["gp","gp_TrsfNLerp"]
+
+    [Modules.math]
+
+        exclude_methods = ["math_Matrix::operator="]
 
     [Modules.Standard]
 
@@ -467,6 +477,18 @@ void register_template_NCollection_Vector(py::object &m, const char *name){
 
         exclude_constructors = [3]
 
+        [Modules.NCollection.Templates.NCollection_HArray1]
+
+        include_superclass_templates = ["NCollection_Array1"]
+
+        [Modules.NCollection.Templates.NCollection_HArray2]
+
+        include_superclass_templates = ["NCollection_Array2"]
+
+        [Modules.NCollection.Templates.NCollection_HSequence]
+
+        include_superclass_templates = ["NCollection_Sequence"]
+
         [Modules.NCollection.parsing_headers]
 
             "NCollection_CellFilter.hxx" = """#include <gp_XYZ.hxx>
@@ -488,11 +510,11 @@ void register_template_NCollection_Vector(py::object &m, const char *name){
 
         exclude_classes = ["Storage_StreamExtCharParityError","Storage_StreamTypeMismatchError",
             "Storage_StreamUnknownTypeError","Storage_Bucket","Storage_BucketOfPersistent"]
-        exclude_typedefs = ["Storage","Storage_MapOfCallBack","Storage_MapOfPers"]
+        exclude_typedefs = ["Storage","Storage_MapOfCallBack","Storage_MapOfPers","Storage_HArrayOfSchema"]
 
     [Modules.TCollection]
 
-        exclude_methods = ["TCollection_ExtendedString::ToUTF8CString"]
+        exclude_methods = ["TCollection_ExtendedString::ToUTF8CString", "TCollection_AsciiString::operator="]
         include_body_post = """py::implicitly_convertible<std::string, TCollection_HAsciiString>();
 py::implicitly_convertible<std::string, TCollection_AsciiString>();"""
 
@@ -759,7 +781,8 @@ struct NSOpenGLContext {};"""
         exclude_methods = ["OpenGl_GlCore11::glGetPointerv","OpenGl_RaytraceGeometry::Clear",
                            "OpenGl_View::ChangeGraduatedTrihedron","OpenGl_View::LayerList",
                            "OpenGl_DepthPeeling::DetachDepthTexture", "OpenGl_DepthPeeling::DepthPeelFbosOit",
-                           "OpenGl_DepthPeeling::FrontBackColorFbosOit"]
+                           "OpenGl_DepthPeeling::FrontBackColorFbosOit",
+                           "OpenGl_SetterInterface::Set"]
         exclude_typedefs = ["OpenGl_SequenceOfLayers","OpenGl_SetterList","OpenGl_MapOfHatchStylesAndIds","OpenGl_MapOfZLayerSettings","OpenGl_IndexedMapOfStructure","OpenGl_MapOfShaderPrograms","OpenGl_IndexedMapOfStructure","OpenGl_LayerSeqIds"]
         exclude_classes = ["OpenGl_GraduatedTrihedron","OpenGl_LayerList","OpenGl_VariableSetterSelector","OpenGl_RaytraceGeometry"]
 
@@ -1175,6 +1198,11 @@ struct __GLXFBConfigRec {};"""
 """
         exclude_classes = ["AdvApp2Var_MathBase"]
 
+    [Modules.XBRepMesh]
+
+        include_header_pre = """#include <TopoDS_Shape.hxx>
+#include <BRepMesh_DiscretRoot.hxx>"""
+
     [Modules.BOPAlgo]
 
         include_header_pre = """#include <BOPDS_Iterator.hxx>
@@ -1224,7 +1252,8 @@ using std::char_traits;
 using std::basic_istream;
 using rapidjson::BasicOStreamWrapper;"""
 
-        exclude_methods = ["RWGltf_GltfMaterialMap::AddGlbImages"]
+        exclude_methods = ["RWGltf_GltfMaterialMap::AddGlbImages",
+                           "RWGltf_GltfJsonParser::SetStream"]
         exclude_typedefs = ["RWGltf_GltfFaceList"]
 
         [Modules.RWGltf.parsing_headers]
@@ -1385,6 +1414,8 @@ using rapidjson::BasicOStreamWrapper;"""
         include_header_pre = "#include <OSD_FileSystem.hxx>"
 
     [Modules.BRepTopAdaptor]
+
+        exclude_methods = ["BRepTopAdaptor_FClass2d::Copy"]
 
         [Modules.BRepTopAdaptor.parsing_headers]
 

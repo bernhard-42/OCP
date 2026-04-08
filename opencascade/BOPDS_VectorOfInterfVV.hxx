@@ -1,5 +1,4 @@
-// Created by: Peter KURNEV
-// Copyright (c) 1999-2014 OPEN CASCADE SAS
+// Copyright (c) 2025 OPEN CASCADE SAS
 //
 // This file is part of Open CASCADE Technology software library.
 //
@@ -12,12 +11,23 @@
 // Alternatively, this file may be used under the terms of Open CASCADE
 // commercial license or contractual agreement.
 
-#ifndef BOPDS_VectorOfInterfVV_HeaderFile
-#define BOPDS_VectorOfInterfVV_HeaderFile
+//! @file BOPDS_VectorOfInterfVV.hxx
+//! @brief Deprecated typedef for backward compatibility.
+//! @deprecated This header is deprecated since OCCT 8.0.0.
+//!             Use NCollection_Vector<BOPDS_InterfVV> directly instead.
 
+#ifndef _BOPDS_VectorOfInterfVV_hxx
+#define _BOPDS_VectorOfInterfVV_hxx
+
+#include <Standard_Macro.hxx>
 #include <NCollection_Vector.hxx>
 #include <BOPDS_Interf.hxx>
 
+Standard_HEADER_DEPRECATED("BOPDS_VectorOfInterfVV.hxx is deprecated since OCCT 8.0.0. Use "
+                           "NCollection_Vector<BOPDS_InterfVV> directly.")
+
+  Standard_DEPRECATED(
+    "BOPDS_VectorOfInterfVV is deprecated, use NCollection_Vector<BOPDS_InterfVV> directly")
 typedef NCollection_Vector<BOPDS_InterfVV> BOPDS_VectorOfInterfVV;
 
-#endif
+#endif // _BOPDS_VectorOfInterfVV_hxx

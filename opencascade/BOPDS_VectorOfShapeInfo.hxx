@@ -1,5 +1,4 @@
-// Created by: Peter KURNEV
-// Copyright (c) 1999-2014 OPEN CASCADE SAS
+// Copyright (c) 2025 OPEN CASCADE SAS
 //
 // This file is part of Open CASCADE Technology software library.
 //
@@ -12,12 +11,23 @@
 // Alternatively, this file may be used under the terms of Open CASCADE
 // commercial license or contractual agreement.
 
-#ifndef BOPDS_VectorOfShapeInfo_HeaderFile
-#define BOPDS_VectorOfShapeInfo_HeaderFile
+//! @file BOPDS_VectorOfShapeInfo.hxx
+//! @brief Deprecated typedef for backward compatibility.
+//! @deprecated This header is deprecated since OCCT 8.0.0.
+//!             Use NCollection_Vector<BOPDS_ShapeInfo> directly instead.
 
+#ifndef _BOPDS_VectorOfShapeInfo_hxx
+#define _BOPDS_VectorOfShapeInfo_hxx
+
+#include <Standard_Macro.hxx>
 #include <NCollection_Vector.hxx>
 #include <BOPDS_ShapeInfo.hxx>
 
+Standard_HEADER_DEPRECATED("BOPDS_VectorOfShapeInfo.hxx is deprecated since OCCT 8.0.0. Use "
+                           "NCollection_Vector<BOPDS_ShapeInfo> directly.")
+
+  Standard_DEPRECATED(
+    "BOPDS_VectorOfShapeInfo is deprecated, use NCollection_Vector<BOPDS_ShapeInfo> directly")
 typedef NCollection_Vector<BOPDS_ShapeInfo> BOPDS_VectorOfShapeInfo;
 
-#endif
+#endif // _BOPDS_VectorOfShapeInfo_hxx

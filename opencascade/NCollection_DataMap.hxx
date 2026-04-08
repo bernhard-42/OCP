@@ -23,6 +23,7 @@
 
 #include <Standard_TypeMismatch.hxx>
 #include <Standard_NoSuchObject.hxx>
+#include <type_traits>
 #include <utility>
 
 #include <Message.hxx>
@@ -87,11 +88,22 @@ public:
     {
     }
 
+    //! Constructor with in-place value construction
+    template <typename K, typename... Args>
+    DataMapNode(K&& theKey, std::in_place_t, NCollection_ListNode* theNext, Args&&... theArgs)
+        : NCollection_TListNode<TheItemType>(std::in_place,
+                                             theNext,
+                                             std::forward<Args>(theArgs)...),
+          myKey(std::forward<K>(theKey))
+    {
+    }
+
     //! Key
-    const TheKeyType& Key(void) const { return myKey; }
+    const TheKeyType& Key() const noexcept { return myKey; }
 
     //! Static deleter to be passed to BaseMap
-    static void delNode(NCollection_ListNode* theNode, Handle(NCollection_BaseAllocator)& theAl)
+    static void delNode(NCollection_ListNode*                   theNode,
+                        occ::handle<NCollection_BaseAllocator>& theAl) noexcept
     {
       ((DataMapNode*)theNode)->~DataMapNode();
       theAl->Free(theNode);
@@ -107,7 +119,7 @@ public:
   {
   public:
     //! Empty constructor
-    Iterator(void)
+    Iterator()
         : NCollection_BaseMap::Iterator()
     {
     }
@@ -119,27 +131,27 @@ public:
     }
 
     //! Query if the end of collection is reached by iterator
-    Standard_Boolean More(void) const { return PMore(); }
+    bool More() const noexcept { return PMore(); }
 
     //! Make a step along the collection
-    void Next(void) { PNext(); }
+    void Next() noexcept { PNext(); }
 
     //! Value inquiry
-    const TheItemType& Value(void) const
+    const TheItemType& Value() const
     {
       Standard_NoSuchObject_Raise_if(!More(), "NCollection_DataMap::Iterator::Value");
       return ((DataMapNode*)myNode)->Value();
     }
 
     //! Value change access
-    TheItemType& ChangeValue(void) const
+    TheItemType& ChangeValue() const
     {
       Standard_NoSuchObject_Raise_if(!More(), "NCollection_DataMap::Iterator::ChangeValue");
       return ((DataMapNode*)myNode)->ChangeValue();
     }
 
     //! Key
-    const TheKeyType& Key(void) const
+    const TheKeyType& Key() const
     {
       Standard_NoSuchObject_Raise_if(!More(), "NCollection_DataMap::Iterator::Key");
       return ((DataMapNode*)myNode)->Key();
@@ -154,36 +166,36 @@ public:
     const_iterator;
 
   //! Returns an iterator pointing to the first element in the map.
-  iterator begin() const { return Iterator(*this); }
+  iterator begin() const noexcept { return Iterator(*this); }
 
   //! Returns an iterator referring to the past-the-end element in the map.
-  iterator end() const { return Iterator(); }
+  iterator end() const noexcept { return Iterator(); }
 
   //! Returns a const iterator pointing to the first element in the map.
-  const_iterator cbegin() const { return Iterator(*this); }
+  const_iterator cbegin() const noexcept { return Iterator(*this); }
 
   //! Returns a const iterator referring to the past-the-end element in the map.
-  const_iterator cend() const { return Iterator(); }
+  const_iterator cend() const noexcept { return Iterator(); }
 
 public:
   // ---------- PUBLIC METHODS ------------
 
   //! Empty Constructor.
   NCollection_DataMap()
-      : NCollection_BaseMap(1, Standard_True, Handle(NCollection_BaseAllocator)())
+      : NCollection_BaseMap(1, true, occ::handle<NCollection_BaseAllocator>())
   {
   }
 
   //! Constructor
-  explicit NCollection_DataMap(const Standard_Integer                   theNbBuckets,
-                               const Handle(NCollection_BaseAllocator)& theAllocator = 0L)
-      : NCollection_BaseMap(theNbBuckets, Standard_True, theAllocator)
+  explicit NCollection_DataMap(const int                                     theNbBuckets,
+                               const occ::handle<NCollection_BaseAllocator>& theAllocator = nullptr)
+      : NCollection_BaseMap(theNbBuckets, true, theAllocator)
   {
   }
 
   //! Copy constructor
   NCollection_DataMap(const NCollection_DataMap& theOther)
-      : NCollection_BaseMap(theOther.NbBuckets(), Standard_True, theOther.myAllocator)
+      : NCollection_BaseMap(theOther.NbBuckets(), true, theOther.myAllocator)
   {
     const int anExt = theOther.Extent();
     if (anExt <= 0)
@@ -201,7 +213,7 @@ public:
 
   //! Exchange the content of two maps without re-allocations.
   //! Notice that allocators will be swapped as well!
-  void Exchange(NCollection_DataMap& theOther) { this->exchangeMapsData(theOther); }
+  void Exchange(NCollection_DataMap& theOther) noexcept { this->exchangeMapsData(theOther); }
 
   //! Assignment.
   //! This method does not change the internal allocator.
@@ -211,7 +223,7 @@ public:
       return *this;
 
     Clear();
-    Standard_Integer anExt = theOther.Extent();
+    int anExt = theOther.Extent();
     if (anExt)
     {
       ReSize(anExt - 1);
@@ -235,11 +247,11 @@ public:
   }
 
   //! ReSize
-  void ReSize(const Standard_Integer N)
+  void ReSize(const int N)
   {
-    NCollection_ListNode** newdata = NULL;
-    NCollection_ListNode** dummy   = NULL;
-    Standard_Integer       newBuck;
+    NCollection_ListNode** newdata = nullptr;
+    NCollection_ListNode** dummy   = nullptr;
+    int                    newBuck;
     if (BeginResize(N, newBuck, newdata, dummy))
     {
       if (myData1)
@@ -268,196 +280,225 @@ public:
 
   //! Bind binds Item to Key in map.
   //! @param theKey  key to add/update
-  //! @param theItem new item; overrides value previously bound to the key
-  //! @return Standard_True if Key was not bound already
-  Standard_Boolean Bind(const TheKeyType& theKey, const TheItemType& theItem)
+  //! @param theItem new item; overrides value previously bound to the key (uses
+  //! destroy+reconstruct)
+  //! @return true if Key was not bound already
+  bool Bind(const TheKeyType& theKey, const TheItemType& theItem)
   {
-    if (Resizable())
-      ReSize(Extent());
-    size_t       aHash;
-    DataMapNode* aNode;
-    if (lookup(theKey, aNode, aHash))
-    {
-      aNode->ChangeValue() = theItem;
-      return Standard_False;
-    }
-    DataMapNode** data = (DataMapNode**)myData1;
-    data[aHash]        = new (this->myAllocator) DataMapNode(theKey, theItem, data[aHash]);
-    Increment();
-    return Standard_True;
+    return emplaceImpl(theKey, std::false_type{}, std::false_type{}, theItem);
   }
 
   //! Bind binds Item to Key in map.
   //! @param theKey  key to add/update
-  //! @param theItem new item; overrides value previously bound to the key
-  //! @return Standard_True if Key was not bound already
-  Standard_Boolean Bind(TheKeyType&& theKey, const TheItemType& theItem)
+  //! @param theItem new item; overrides value previously bound to the key (uses
+  //! destroy+reconstruct)
+  //! @return true if Key was not bound already
+  bool Bind(TheKeyType&& theKey, const TheItemType& theItem)
   {
-    if (Resizable())
-      ReSize(Extent());
-    size_t       aHash;
-    DataMapNode* aNode;
-    if (lookup(theKey, aNode, aHash))
-    {
-      aNode->ChangeValue() = theItem;
-      return Standard_False;
-    }
-    DataMapNode** data = (DataMapNode**)myData1;
-    data[aHash] =
-      new (this->myAllocator) DataMapNode(std::forward<TheKeyType>(theKey), theItem, data[aHash]);
-    Increment();
-    return Standard_True;
+    return emplaceImpl(std::move(theKey), std::false_type{}, std::false_type{}, theItem);
   }
 
   //! Bind binds Item to Key in map.
   //! @param theKey  key to add/update
-  //! @param theItem new item; overrides value previously bound to the key
-  //! @return Standard_True if Key was not bound already
-  Standard_Boolean Bind(const TheKeyType& theKey, TheItemType&& theItem)
+  //! @param theItem new item; overrides value previously bound to the key (uses
+  //! destroy+reconstruct)
+  //! @return true if Key was not bound already
+  bool Bind(const TheKeyType& theKey, TheItemType&& theItem)
   {
-    if (Resizable())
-      ReSize(Extent());
-    size_t       aHash;
-    DataMapNode* aNode;
-    if (lookup(theKey, aNode, aHash))
-    {
-      aNode->ChangeValue() = std::forward<TheItemType>(theItem);
-      return Standard_False;
-    }
-    DataMapNode** data = (DataMapNode**)myData1;
-    data[aHash] =
-      new (this->myAllocator) DataMapNode(theKey, std::forward<TheItemType>(theItem), data[aHash]);
-    Increment();
-    return Standard_True;
+    return emplaceImpl(theKey, std::false_type{}, std::false_type{}, std::move(theItem));
   }
 
   //! Bind binds Item to Key in map.
   //! @param theKey  key to add/update
-  //! @param theItem new item; overrides value previously bound to the key
-  //! @return Standard_True if Key was not bound already
-  Standard_Boolean Bind(TheKeyType&& theKey, TheItemType&& theItem)
+  //! @param theItem new item; overrides value previously bound to the key (uses
+  //! destroy+reconstruct)
+  //! @return true if Key was not bound already
+  bool Bind(TheKeyType&& theKey, TheItemType&& theItem)
   {
-    if (Resizable())
-      ReSize(Extent());
-    size_t       aHash;
-    DataMapNode* aNode;
-    if (lookup(theKey, aNode, aHash))
-    {
-      aNode->ChangeValue() = theItem;
-      return Standard_False;
-    }
-    DataMapNode** data = (DataMapNode**)myData1;
-    data[aHash]        = new (this->myAllocator) DataMapNode(std::forward<TheKeyType>(theKey),
-                                                      std::forward<TheItemType>(theItem),
-                                                      data[aHash]);
-    Increment();
-    return Standard_True;
+    return emplaceImpl(std::move(theKey), std::false_type{}, std::false_type{}, std::move(theItem));
   }
 
   //! Bound binds Item to Key in map.
   //! @param theKey  key to add/update
-  //! @param theItem new item; overrides value previously bound to the key
+  //! @param theItem new item; overrides value previously bound to the key (uses
+  //! destroy+reconstruct)
   //! @return pointer to modifiable Item
   TheItemType* Bound(const TheKeyType& theKey, const TheItemType& theItem)
   {
-    if (Resizable())
-      ReSize(Extent());
-    size_t       aHash;
-    DataMapNode* aNode;
-    if (lookup(theKey, aNode, aHash))
-    {
-      aNode->ChangeValue() = theItem;
-      return &aNode->ChangeValue();
-    }
-    DataMapNode** data = (DataMapNode**)myData1;
-    data[aHash]        = new (this->myAllocator) DataMapNode(theKey, theItem, data[aHash]);
-    Increment();
-    return &data[aHash]->ChangeValue();
+    return &emplaceImpl(theKey, std::false_type{}, std::true_type{}, theItem);
   }
 
   //! Bound binds Item to Key in map.
   //! @param theKey  key to add/update
-  //! @param theItem new item; overrides value previously bound to the key
+  //! @param theItem new item; overrides value previously bound to the key (uses
+  //! destroy+reconstruct)
   //! @return pointer to modifiable Item
   TheItemType* Bound(TheKeyType&& theKey, const TheItemType& theItem)
   {
-    if (Resizable())
-      ReSize(Extent());
-    size_t       aHash;
-    DataMapNode* aNode;
-    if (lookup(theKey, aNode, aHash))
-    {
-      aNode->ChangeValue() = theItem;
-      return &aNode->ChangeValue();
-    }
-    DataMapNode** data = (DataMapNode**)myData1;
-    data[aHash] =
-      new (this->myAllocator) DataMapNode(std::forward<TheKeyType>(theKey), theItem, data[aHash]);
-    Increment();
-    return &data[aHash]->ChangeValue();
+    return &emplaceImpl(std::move(theKey), std::false_type{}, std::true_type{}, theItem);
   }
 
   //! Bound binds Item to Key in map.
   //! @param theKey  key to add/update
-  //! @param theItem new item; overrides value previously bound to the key
+  //! @param theItem new item; overrides value previously bound to the key (uses
+  //! destroy+reconstruct)
   //! @return pointer to modifiable Item
   TheItemType* Bound(const TheKeyType& theKey, TheItemType&& theItem)
   {
-    if (Resizable())
-      ReSize(Extent());
-    size_t       aHash;
-    DataMapNode* aNode;
-    if (lookup(theKey, aNode, aHash))
-    {
-      aNode->ChangeValue() = std::forward<TheItemType>(theItem);
-      return &aNode->ChangeValue();
-    }
-    DataMapNode** data = (DataMapNode**)myData1;
-    data[aHash] =
-      new (this->myAllocator) DataMapNode(theKey, std::forward<TheItemType>(theItem), data[aHash]);
-    Increment();
-    return &data[aHash]->ChangeValue();
+    return &emplaceImpl(theKey, std::false_type{}, std::true_type{}, std::move(theItem));
   }
 
   //! Bound binds Item to Key in map.
   //! @param theKey  key to add/update
-  //! @param theItem new item; overrides value previously bound to the key
+  //! @param theItem new item; overrides value previously bound to the key (uses
+  //! destroy+reconstruct)
   //! @return pointer to modifiable Item
   TheItemType* Bound(TheKeyType&& theKey, TheItemType&& theItem)
   {
-    if (Resizable())
-      ReSize(Extent());
-    size_t       aHash;
-    DataMapNode* aNode;
-    if (lookup(theKey, aNode, aHash))
-    {
-      aNode->ChangeValue() = std::forward<TheItemType>(theItem);
-      return &aNode->ChangeValue();
-    }
-    DataMapNode** data = (DataMapNode**)myData1;
-    data[aHash]        = new (this->myAllocator) DataMapNode(std::forward<TheKeyType>(theKey),
-                                                      std::forward<TheItemType>(theItem),
-                                                      data[aHash]);
-    Increment();
-    return &data[aHash]->ChangeValue();
+    return &emplaceImpl(std::move(theKey), std::false_type{}, std::true_type{}, std::move(theItem));
+  }
+
+  //! TryBind binds Item to Key in map only if Key is not yet bound.
+  //! @param theKey  key to add
+  //! @param theItem item to bind if Key is not yet bound
+  //! @return true if Key was newly bound, false if Key already existed (no replacement)
+  bool TryBind(const TheKeyType& theKey, const TheItemType& theItem)
+  {
+    return emplaceImpl(theKey, std::true_type{}, std::false_type{}, theItem);
+  }
+
+  //! TryBind binds Item to Key in map only if Key is not yet bound.
+  //! @param theKey  key to add
+  //! @param theItem item to bind if Key is not yet bound
+  //! @return true if Key was newly bound, false if Key already existed (no replacement)
+  bool TryBind(TheKeyType&& theKey, const TheItemType& theItem)
+  {
+    return emplaceImpl(std::move(theKey), std::true_type{}, std::false_type{}, theItem);
+  }
+
+  //! TryBind binds Item to Key in map only if Key is not yet bound.
+  //! @param theKey  key to add
+  //! @param theItem item to bind if Key is not yet bound
+  //! @return true if Key was newly bound, false if Key already existed (no replacement)
+  bool TryBind(const TheKeyType& theKey, TheItemType&& theItem)
+  {
+    return emplaceImpl(theKey, std::true_type{}, std::false_type{}, std::move(theItem));
+  }
+
+  //! TryBind binds Item to Key in map only if Key is not yet bound.
+  //! @param theKey  key to add
+  //! @param theItem item to bind if Key is not yet bound
+  //! @return true if Key was newly bound, false if Key already existed (no replacement)
+  bool TryBind(TheKeyType&& theKey, TheItemType&& theItem)
+  {
+    return emplaceImpl(std::move(theKey), std::true_type{}, std::false_type{}, std::move(theItem));
+  }
+
+  //! TryBound binds Item to Key in map only if Key is not yet bound.
+  //! @param theKey  key to add
+  //! @param theItem item to bind if Key is not yet bound
+  //! @return reference to existing or newly bound Item
+  TheItemType& TryBound(const TheKeyType& theKey, const TheItemType& theItem)
+  {
+    return emplaceImpl(theKey, std::true_type{}, std::true_type{}, theItem);
+  }
+
+  //! TryBound binds Item to Key in map only if Key is not yet bound.
+  //! @param theKey  key to add
+  //! @param theItem item to bind if Key is not yet bound
+  //! @return reference to existing or newly bound Item
+  TheItemType& TryBound(TheKeyType&& theKey, const TheItemType& theItem)
+  {
+    return emplaceImpl(std::move(theKey), std::true_type{}, std::true_type{}, theItem);
+  }
+
+  //! TryBound binds Item to Key in map only if Key is not yet bound.
+  //! @param theKey  key to add
+  //! @param theItem item to bind if Key is not yet bound
+  //! @return reference to existing or newly bound Item
+  TheItemType& TryBound(const TheKeyType& theKey, TheItemType&& theItem)
+  {
+    return emplaceImpl(theKey, std::true_type{}, std::true_type{}, std::move(theItem));
+  }
+
+  //! TryBound binds Item to Key in map only if Key is not yet bound.
+  //! @param theKey  key to add
+  //! @param theItem item to bind if Key is not yet bound
+  //! @return reference to existing or newly bound Item
+  TheItemType& TryBound(TheKeyType&& theKey, TheItemType&& theItem)
+  {
+    return emplaceImpl(std::move(theKey), std::true_type{}, std::true_type{}, std::move(theItem));
+  }
+
+  //! Emplace constructs value in-place; if key exists, destroys and reconstructs value.
+  //! @param theKey  key to add/update
+  //! @param theArgs arguments forwarded to value constructor
+  //! @return true if key was newly added, false if key already existed (and value was
+  //! reconstructed)
+  template <typename K, typename... Args>
+  bool Emplace(K&& theKey, Args&&... theArgs)
+  {
+    return emplaceImpl(std::forward<K>(theKey),
+                       std::false_type{},
+                       std::false_type{},
+                       std::forward<Args>(theArgs)...);
+  }
+
+  //! Emplaced constructs value in-place; if key exists, destroys and reconstructs value.
+  //! @param theKey  key to add/update
+  //! @param theArgs arguments forwarded to value constructor
+  //! @return reference to the value (existing reconstructed or newly added)
+  template <typename K, typename... Args>
+  TheItemType& Emplaced(K&& theKey, Args&&... theArgs)
+  {
+    return emplaceImpl(std::forward<K>(theKey),
+                       std::false_type{},
+                       std::true_type{},
+                       std::forward<Args>(theArgs)...);
+  }
+
+  //! TryEmplace constructs value in-place only if key not already bound.
+  //! @param theKey  key to add
+  //! @param theArgs arguments forwarded to value constructor
+  //! @return true if key was newly added, false if key already existed
+  template <typename K, typename... Args>
+  bool TryEmplace(K&& theKey, Args&&... theArgs)
+  {
+    return emplaceImpl(std::forward<K>(theKey),
+                       std::true_type{},
+                       std::false_type{},
+                       std::forward<Args>(theArgs)...);
+  }
+
+  //! TryEmplaced constructs value in-place only if key not already bound.
+  //! @param theKey  key to add
+  //! @param theArgs arguments forwarded to value constructor
+  //! @return reference to the value (existing or newly added)
+  template <typename K, typename... Args>
+  TheItemType& TryEmplaced(K&& theKey, Args&&... theArgs)
+  {
+    return emplaceImpl(std::forward<K>(theKey),
+                       std::true_type{},
+                       std::true_type{},
+                       std::forward<Args>(theArgs)...);
   }
 
   //! IsBound
-  Standard_Boolean IsBound(const TheKeyType& theKey) const
+  bool IsBound(const TheKeyType& theKey) const
   {
     DataMapNode* p;
     return lookup(theKey, p);
   }
 
   //! UnBind removes Item Key pair from map
-  Standard_Boolean UnBind(const TheKeyType& theKey)
+  bool UnBind(const TheKeyType& theKey)
   {
     if (IsEmpty())
-      return Standard_False;
+      return false;
     DataMapNode** data = (DataMapNode**)myData1;
     const size_t  k    = HashCode(theKey, NbBuckets());
     DataMapNode*  p    = data[k];
-    DataMapNode*  q    = NULL;
+    DataMapNode*  q    = nullptr;
     while (p)
     {
       if (IsEqual(p->Key(), theKey))
@@ -469,28 +510,28 @@ public:
           data[k] = (DataMapNode*)p->Next();
         p->~DataMapNode();
         this->myAllocator->Free(p);
-        return Standard_True;
+        return true;
       }
       q = p;
       p = (DataMapNode*)p->Next();
     }
-    return Standard_False;
+    return false;
   }
 
   //! Seek returns pointer to Item by Key. Returns
   //! NULL is Key was not bound.
   const TheItemType* Seek(const TheKeyType& theKey) const
   {
-    DataMapNode* p = 0;
+    DataMapNode* p = nullptr;
     if (!lookup(theKey, p))
-      return 0L;
+      return nullptr;
     return &p->Value();
   }
 
   //! Find returns the Item for Key. Raises if Key was not bound
   const TheItemType& Find(const TheKeyType& theKey) const
   {
-    DataMapNode* p = 0;
+    DataMapNode* p = nullptr;
     if (!lookup(theKey, p))
       throw Standard_NoSuchObject("NCollection_DataMap::Find");
     return p->Value();
@@ -498,14 +539,14 @@ public:
 
   //! Find Item for key with copying.
   //! @return true if key was found
-  Standard_Boolean Find(const TheKeyType& theKey, TheItemType& theValue) const
+  bool Find(const TheKeyType& theKey, TheItemType& theValue) const
   {
-    DataMapNode* p = 0;
+    DataMapNode* p = nullptr;
     if (!lookup(theKey, p))
-      return Standard_False;
+      return false;
 
     theValue = p->Value();
-    return Standard_True;
+    return true;
   }
 
   //! operator ()
@@ -515,16 +556,16 @@ public:
   //! NULL is Key was not bound.
   TheItemType* ChangeSeek(const TheKeyType& theKey)
   {
-    DataMapNode* p = 0;
+    DataMapNode* p = nullptr;
     if (!lookup(theKey, p))
-      return 0L;
+      return nullptr;
     return &p->ChangeValue();
   }
 
   //! ChangeFind returns mofifiable Item by Key. Raises if Key was not bound
   TheItemType& ChangeFind(const TheKeyType& theKey)
   {
-    DataMapNode* p = 0;
+    DataMapNode* p = nullptr;
     if (!lookup(theKey, p))
       throw Standard_NoSuchObject("NCollection_DataMap::Find");
     return p->ChangeValue();
@@ -535,13 +576,10 @@ public:
 
   //! Clear data. If doReleaseMemory is false then the table of
   //! buckets is not released and will be reused.
-  void Clear(const Standard_Boolean doReleaseMemory = Standard_False)
-  {
-    Destroy(DataMapNode::delNode, doReleaseMemory);
-  }
+  void Clear(const bool doReleaseMemory = false) { Destroy(DataMapNode::delNode, doReleaseMemory); }
 
   //! Clear data and reset allocator
-  void Clear(const Handle(NCollection_BaseAllocator)& theAllocator)
+  void Clear(const occ::handle<NCollection_BaseAllocator>& theAllocator)
   {
     Clear(theAllocator != this->myAllocator);
     this->myAllocator =
@@ -549,27 +587,27 @@ public:
   }
 
   //! Destructor
-  virtual ~NCollection_DataMap(void) { Clear(true); }
+  ~NCollection_DataMap() override { Clear(true); }
 
   //! Size
-  Standard_Integer Size(void) const { return Extent(); }
+  int Size() const noexcept { return Extent(); }
 
 protected:
   //! Lookup for particular key in map.
   //! @param[in] theKey key to compute hash
   //! @param[out] theNode the detected node with equal key. Can be null.
   //! @return true if key is found
-  Standard_Boolean lookup(const TheKeyType& theKey, DataMapNode*& theNode) const
+  bool lookup(const TheKeyType& theKey, DataMapNode*& theNode) const
   {
     if (IsEmpty())
-      return Standard_False; // Not found
+      return false; // Not found
     for (theNode = (DataMapNode*)myData1[HashCode(theKey, NbBuckets())]; theNode;
          theNode = (DataMapNode*)theNode->Next())
     {
       if (IsEqual(theNode->Key(), theKey))
-        return Standard_True;
+        return true;
     }
-    return Standard_False; // Not found
+    return false; // Not found
   }
 
   //! Lookup for particular key in map.
@@ -577,19 +615,19 @@ protected:
   //! @param[out] theNode the detected node with equal key. Can be null.
   //! @param[out] theHash computed bounded hash code for current key.
   //! @return true if key is found
-  Standard_Boolean lookup(const TheKeyType& theKey, DataMapNode*& theNode, size_t& theHash) const
+  bool lookup(const TheKeyType& theKey, DataMapNode*& theNode, size_t& theHash) const
   {
     theHash = HashCode(theKey, NbBuckets());
     if (IsEmpty())
-      return Standard_False; // Not found
+      return false; // Not found
     for (theNode = (DataMapNode*)myData1[theHash]; theNode; theNode = (DataMapNode*)theNode->Next())
     {
       if (IsEqual(theNode->Key(), theKey))
       {
-        return Standard_True;
+        return true;
       }
     }
-    return Standard_False; // Not found
+    return false; // Not found
   }
 
   bool IsEqual(const TheKeyType& theKey1, const TheKeyType& theKey2) const
@@ -600,6 +638,47 @@ protected:
   size_t HashCode(const TheKeyType& theKey, const int theUpperBound) const
   {
     return myHasher(theKey) % theUpperBound + 1;
+  }
+
+  //! Implementation helper for Bind/TryBind/Bound/TryBound/Emplace/TryEmplace/Emplaced/TryEmplaced.
+  //! Uses destroy + reconstruct in-place instead of assignment operator.
+  //! @tparam K forwarding reference type for key
+  //! @tparam IsTry if true, does not overwrite existing; if false, destroys and reconstructs
+  //! @tparam ReturnRef if true, returns reference; if false, returns bool
+  //! @param theKey  key to add/update
+  //! @param theArgs arguments forwarded to value constructor
+  //! @return bool or TheItemType& depending on ReturnRef
+  template <typename K, bool IsTry, bool ReturnRef, typename... Args>
+  auto emplaceImpl(K&& theKey,
+                   std::bool_constant<IsTry>,
+                   std::bool_constant<ReturnRef>,
+                   Args&&... theArgs) -> std::conditional_t<ReturnRef, TheItemType&, bool>
+  {
+    if (Resizable())
+      ReSize(Extent());
+    size_t       aHash;
+    DataMapNode* aNode;
+    if (lookup(theKey, aNode, aHash))
+    {
+      if constexpr (!IsTry)
+      {
+        aNode->ChangeValue() = TheItemType(std::forward<Args>(theArgs)...);
+      }
+      if constexpr (ReturnRef)
+        return aNode->ChangeValue();
+      else
+        return false;
+    }
+    DataMapNode** data = (DataMapNode**)myData1;
+    data[aHash]        = new (this->myAllocator) DataMapNode(std::forward<K>(theKey),
+                                                      std::in_place,
+                                                      data[aHash],
+                                                      std::forward<Args>(theArgs)...);
+    Increment();
+    if constexpr (ReturnRef)
+      return data[aHash]->ChangeValue();
+    else
+      return true;
   }
 
 private:
