@@ -2,6 +2,7 @@
 #include <Standard_Handle.hxx>
 #include <type_traits>
 #include <memory>
+#define FMT_HEADER_ONLY
 #include <fmt/format.h>
 
 namespace py = pybind11;
@@ -22,7 +23,7 @@ void register_occ_exception(py::handle scope,
         try {
             std::rethrow_exception(p);
         } catch (const CppException &e) {
-            ex(e.GetMessageString());
+            py::set_error(ex, e.what());
         }
     });    
 };

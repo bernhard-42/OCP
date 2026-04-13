@@ -23,6 +23,8 @@
 #include <NCollection_TListNode.hxx>
 #include <Standard_NoSuchObject.hxx>
 
+#include <functional>
+#include <optional>
 #include <type_traits>
 #include <utility>
 
@@ -132,6 +134,15 @@ public:
   typedef NCollection_StlIterator<std::forward_iterator_tag, Iterator, TheKeyType, true>
     const_iterator;
 
+  //! Shorthand for iterator type (same as const_iterator for key-only maps).
+  typedef const_iterator iterator;
+
+  //! Returns an iterator pointing to the first element in the map.
+  iterator begin() const noexcept { return Iterator(*this); }
+
+  //! Returns an iterator referring to the past-the-end element in the map.
+  iterator end() const noexcept { return Iterator(); }
+
   //! Returns a const iterator pointing to the first element in the map.
   const_iterator cbegin() const noexcept { return Iterator(*this); }
 
@@ -154,9 +165,34 @@ public:
   {
   }
 
+  //! Constructor with custom hasher (copy).
+  //! @param theHasher custom hasher instance
+  //! @param theNbBuckets initial number of buckets
+  //! @param theAllocator custom memory allocator
+  explicit NCollection_Map(const Hasher&                                 theHasher,
+                           const int                                     theNbBuckets = 1,
+                           const occ::handle<NCollection_BaseAllocator>& theAllocator = nullptr)
+      : NCollection_BaseMap(theNbBuckets, true, theAllocator),
+        myHasher(theHasher)
+  {
+  }
+
+  //! Constructor with custom hasher (move).
+  //! @param theHasher custom hasher instance (moved)
+  //! @param theNbBuckets initial number of buckets
+  //! @param theAllocator custom memory allocator
+  explicit NCollection_Map(Hasher&&                                      theHasher,
+                           const int                                     theNbBuckets = 1,
+                           const occ::handle<NCollection_BaseAllocator>& theAllocator = nullptr)
+      : NCollection_BaseMap(theNbBuckets, true, theAllocator),
+        myHasher(std::move(theHasher))
+  {
+  }
+
   //! Copy constructor
   NCollection_Map(const NCollection_Map& theOther)
-      : NCollection_BaseMap(theOther.NbBuckets(), true, theOther.myAllocator)
+      : NCollection_BaseMap(theOther.NbBuckets(), true, theOther.myAllocator),
+        myHasher(theOther.myHasher)
   {
     const int anExt = theOther.Extent();
     if (anExt <= 0)
@@ -168,13 +204,21 @@ public:
 
   //! Move constructor
   NCollection_Map(NCollection_Map&& theOther) noexcept
-      : NCollection_BaseMap(std::forward<NCollection_BaseMap>(theOther))
+      : NCollection_BaseMap(std::forward<NCollection_BaseMap>(theOther)),
+        myHasher(std::move(theOther.myHasher))
   {
   }
 
   //! Exchange the content of two maps without re-allocations.
   //! Notice that allocators will be swapped as well!
-  void Exchange(NCollection_Map& theOther) noexcept { this->exchangeMapsData(theOther); }
+  void Exchange(NCollection_Map& theOther) noexcept
+  {
+    this->exchangeMapsData(theOther);
+    std::swap(myHasher, theOther.myHasher);
+  }
+
+  //! Returns const reference to the hasher.
+  const Hasher& GetHasher() const noexcept { return myHasher; }
 
   //! Assign.
   //! This method does not change the internal allocator.
@@ -274,11 +318,39 @@ public:
     return emplaceImpl(std::false_type{}, std::true_type{}, std::forward<Args>(theArgs)...);
   }
 
+  //! TryEmplace constructs key in-place only if not already present.
+  //! @param theArgs arguments forwarded to key constructor
+  //! @return true if key was newly added, false if key already existed
+  template <typename... Args>
+  bool TryEmplace(Args&&... theArgs)
+  {
+    return emplaceImpl(std::true_type{}, std::false_type{}, std::forward<Args>(theArgs)...);
+  }
+
+  //! TryEmplaced constructs key in-place only if not already present.
+  //! @param theArgs arguments forwarded to key constructor
+  //! @return const reference to the key (existing or newly added)
+  template <typename... Args>
+  const TheKeyType& TryEmplaced(Args&&... theArgs)
+  {
+    return emplaceImpl(std::true_type{}, std::true_type{}, std::forward<Args>(theArgs)...);
+  }
+
   //! Contains
   bool Contains(const TheKeyType& theKey) const
   {
     MapNode* p;
     return lookup(theKey, p);
+  }
+
+  //! Contained returns optional const reference to the key in the map.
+  //! Returns std::nullopt if the key is not found.
+  std::optional<std::reference_wrapper<const TheKeyType>> Contained(const TheKeyType& theKey) const
+  {
+    MapNode* p;
+    if (!lookup(theKey, p))
+      return std::nullopt;
+    return std::cref(p->Key());
   }
 
   //! Remove

@@ -36,7 +36,8 @@ enum class Status
   InfiniteSolutions,   //!< Infinite number of solutions (degenerate case)
   NoSolution,          //!< No solution exists
   NotPositiveDefinite, //!< Matrix not positive definite (for Cholesky, Newton, etc.)
-  Singular             //!< Matrix is singular or nearly singular
+  Singular,            //!< Matrix is singular or nearly singular
+  NonDescentDirection  //!< Search direction is not a descent direction for merit function
 };
 
 //! Result for scalar (1D) root finding and minimization.
@@ -101,6 +102,21 @@ struct LinearResult
 {
   MathUtils::Status          Status = MathUtils::Status::NotConverged; //!< Computation status
   std::optional<math_Vector> Solution;    //!< Solution vector X in AX = B (set by solver)
+  std::optional<double>      Determinant; //!< Determinant of matrix (if computed)
+
+  //! Returns true if computation succeeded.
+  bool IsDone() const { return Status == MathUtils::Status::OK; }
+
+  //! Conversion to bool for convenient checking.
+  explicit operator bool() const { return IsDone(); }
+};
+
+//! Result for multiple linear systems solving (AX = B with matrix RHS).
+//! Contains the full solution matrix and determinant if computed.
+struct LinearMultipleResult
+{
+  MathUtils::Status          Status = MathUtils::Status::NotConverged; //!< Computation status
+  std::optional<math_Matrix> Solutions;   //!< Solution matrix X in AX = B (set by solver)
   std::optional<double>      Determinant; //!< Determinant of matrix (if computed)
 
   //! Returns true if computation succeeded.

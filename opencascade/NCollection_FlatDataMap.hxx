@@ -18,7 +18,9 @@
 #include <Standard_OutOfRange.hxx>
 #include <Standard_NoSuchObject.hxx>
 #include <NCollection_DefaultHasher.hxx>
+#include <NCollection_ItemsView.hxx>
 
+#include <functional>
 #include <new>
 #include <optional>
 #include <type_traits>
@@ -37,16 +39,26 @@
  * - Power-of-2 sizing for fast modulo operations
  * - No per-element allocations
  *
- * Best suited for:
+ * Typical faster usage patterns:
  * - POD or small key/value types
  * - Performance-critical code paths
  * - Lookup-heavy workloads
+ * - Full traversal / iteration-heavy workloads
+ * - Stable-size maps with Reserve() called once before bulk Bind()
+ *
+ * Container-specific implementation notes:
+ * - UnBind() keeps probe clusters consistent using backward-shift compaction.
+ *
+ * Relative to NCollection_DataMap:
+ * - Bind()/UnBind() can be faster in many workloads thanks to contiguous storage and
+ *   no per-element node allocation.
+ * - Iteration is often faster due to contiguous slot scanning and reduced pointer chasing.
  *
  * Limitations:
  * - Keys and values must be movable
  * - Higher memory usage at low load factors
  * - Iteration order is not insertion order
- * - Maximum probe distance is 250 (sufficient for normal hash distributions)
+ * - Probe distance grows with collisions (bounded by table capacity)
  *
  * @note This class is NOT thread-safe. External synchronization is required
  *       for concurrent access from multiple threads.
@@ -68,34 +80,28 @@ public:
 private:
   //! Default initial capacity (must be power of 2)
   static constexpr size_t THE_DEFAULT_CAPACITY = 8;
-
-  //! Maximum allowed probe distance before throwing an exception.
-  //! This limit is sufficient for normal hash distributions with proper load factors.
-  static constexpr uint8_t THE_MAX_PROBE_DISTANCE = 250;
-
-  //! Slot state enumeration for hash table entries.
-  //! Uses Robin Hood hashing with backward shift deletion.
-  enum class SlotState : uint8_t
-  {
-    Empty,   //!< Slot has never been used; search can stop here
-    Deleted, //!< Slot was used but element was removed; search must continue past this
-    Used     //!< Slot contains a valid element
-  };
+  //! Maximum load factor numerator (13/16 = 81.25%).
+  static constexpr size_t THE_MAX_LOAD_NUMERATOR = 13;
+  //! Maximum load factor denominator.
+  static constexpr size_t THE_MAX_LOAD_DENOMINATOR = 16;
 
   //! Internal slot structure holding key, value, and metadata.
   //! Key and item storage is uninitialized until state becomes Used.
+#ifdef _MSC_VER
+  #pragma warning(push)
+  #pragma warning(disable : 4324) // structure was padded due to alignment specifier
+#endif
   struct Slot
   {
+    size_t myHash; //!< Cached hash code
+    //! Distance from ideal bucket plus one; 0 means Empty, otherwise Used.
+    size_t myProbeDistancePlus1;
     alignas(TheKeyType) char myKeyStorage[sizeof(TheKeyType)];
     alignas(TheItemType) char myItemStorage[sizeof(TheItemType)];
-    size_t    myHash;          //!< Cached hash code
-    uint8_t   myProbeDistance; //!< Distance from ideal bucket (for Robin Hood)
-    SlotState myState;         //!< Current state of this slot
 
     Slot() noexcept
         : myHash(0),
-          myProbeDistance(0),
-          myState(SlotState::Empty)
+          myProbeDistancePlus1(0)
     {
     }
 
@@ -112,7 +118,23 @@ private:
     {
       return *reinterpret_cast<const TheItemType*>(myItemStorage);
     }
+
+    bool IsEmpty() const noexcept { return myProbeDistancePlus1 == 0; }
+
+    bool IsUsed() const noexcept { return myProbeDistancePlus1 != 0; }
+
+    size_t ProbeDistance() const noexcept { return myProbeDistancePlus1 - 1; }
+
+    void SetProbeDistance(const size_t theProbeDistance) noexcept
+    {
+      myProbeDistancePlus1 = theProbeDistance + 1;
+    }
+
+    void SetEmpty() noexcept { myProbeDistancePlus1 = 0; }
   };
+#ifdef _MSC_VER
+  #pragma warning(pop)
+#endif
 
 public:
   // **************** Iterator interface ****************
@@ -136,7 +158,7 @@ public:
           myIndex(0)
     {
       // Find first used slot
-      while (myIndex < myCapacity && mySlots[myIndex].myState != SlotState::Used)
+      while (myIndex < myCapacity && !mySlots[myIndex].IsUsed())
       {
         ++myIndex;
       }
@@ -149,7 +171,7 @@ public:
     void Next() noexcept
     {
       ++myIndex;
-      while (myIndex < myCapacity && mySlots[myIndex].myState != SlotState::Used)
+      while (myIndex < myCapacity && !mySlots[myIndex].IsUsed())
       {
         ++myIndex;
       }
@@ -174,6 +196,12 @@ public:
     {
       Standard_OutOfRange_Raise_if(!More(), "NCollection_FlatDataMap::Iterator::ChangeValue");
       return const_cast<Slot*>(mySlots)[myIndex].Item();
+    }
+
+    //! Performs comparison of two iterators.
+    bool IsEqual(const Iterator& theOther) const noexcept
+    {
+      return mySlots == theOther.mySlots && myIndex == theOther.myIndex;
     }
 
   private:
@@ -206,6 +234,36 @@ public:
     }
   }
 
+  //! Constructor with custom hasher (copy).
+  //! @param theHasher custom hasher instance
+  //! @param theNbBuckets initial capacity hint
+  explicit NCollection_FlatDataMap(const Hasher& theHasher, const int theNbBuckets = 0)
+      : mySlots(nullptr),
+        myCapacity(0),
+        mySize(0),
+        myHasher(theHasher)
+  {
+    if (theNbBuckets > 0)
+    {
+      reserve(static_cast<size_t>(theNbBuckets));
+    }
+  }
+
+  //! Constructor with custom hasher (move).
+  //! @param theHasher custom hasher instance (moved)
+  //! @param theNbBuckets initial capacity hint
+  explicit NCollection_FlatDataMap(Hasher&& theHasher, const int theNbBuckets = 0)
+      : mySlots(nullptr),
+        myCapacity(0),
+        mySize(0),
+        myHasher(std::move(theHasher))
+  {
+    if (theNbBuckets > 0)
+    {
+      reserve(static_cast<size_t>(theNbBuckets));
+    }
+  }
+
   //! Copy constructor
   NCollection_FlatDataMap(const NCollection_FlatDataMap& theOther)
       : mySlots(nullptr),
@@ -215,16 +273,22 @@ public:
   {
     if (theOther.mySize > 0)
     {
-      reserve(theOther.myCapacity);
+      // Allocate same capacity as the source (not through reserve which may change capacity)
+      mySlots = static_cast<Slot*>(Standard::Allocate(theOther.myCapacity * sizeof(Slot)));
       for (size_t i = 0; i < theOther.myCapacity; ++i)
       {
-        if (theOther.mySlots[i].myState == SlotState::Used)
+        new (&mySlots[i]) Slot();
+      }
+      myCapacity = theOther.myCapacity;
+
+      for (size_t i = 0; i < theOther.myCapacity; ++i)
+      {
+        if (theOther.mySlots[i].IsUsed())
         {
           new (&mySlots[i].Key()) TheKeyType(theOther.mySlots[i].Key());
           new (&mySlots[i].Item()) TheItemType(theOther.mySlots[i].Item());
-          mySlots[i].myHash          = theOther.mySlots[i].myHash;
-          mySlots[i].myProbeDistance = theOther.mySlots[i].myProbeDistance;
-          mySlots[i].myState         = SlotState::Used;
+          mySlots[i].myHash               = theOther.mySlots[i].myHash;
+          mySlots[i].myProbeDistancePlus1 = theOther.mySlots[i].myProbeDistancePlus1;
         }
       }
       mySize = theOther.mySize;
@@ -252,18 +316,25 @@ public:
     if (this != &theOther)
     {
       Clear(true);
+      myHasher = theOther.myHasher;
       if (theOther.mySize > 0)
       {
-        reserve(theOther.myCapacity);
+        // Allocate same capacity as the source (not through reserve which may change capacity)
+        mySlots = static_cast<Slot*>(Standard::Allocate(theOther.myCapacity * sizeof(Slot)));
         for (size_t i = 0; i < theOther.myCapacity; ++i)
         {
-          if (theOther.mySlots[i].myState == SlotState::Used)
+          new (&mySlots[i]) Slot();
+        }
+        myCapacity = theOther.myCapacity;
+
+        for (size_t i = 0; i < theOther.myCapacity; ++i)
+        {
+          if (theOther.mySlots[i].IsUsed())
           {
             new (&mySlots[i].Key()) TheKeyType(theOther.mySlots[i].Key());
             new (&mySlots[i].Item()) TheItemType(theOther.mySlots[i].Item());
-            mySlots[i].myHash          = theOther.mySlots[i].myHash;
-            mySlots[i].myProbeDistance = theOther.mySlots[i].myProbeDistance;
-            mySlots[i].myState         = SlotState::Used;
+            mySlots[i].myHash               = theOther.mySlots[i].myHash;
+            mySlots[i].myProbeDistancePlus1 = theOther.mySlots[i].myProbeDistancePlus1;
           }
         }
         mySize = theOther.mySize;
@@ -309,7 +380,36 @@ public:
   {
     if (mySize == 0)
       return false;
-    return findSlot(theKey).has_value();
+    size_t anIndex = 0;
+    return findSlotIndex(theKey, anIndex);
+  }
+
+  //! Contained returns optional pair of const references to key and value.
+  //! Returns std::nullopt if the key is not found.
+  std::optional<
+    std::pair<std::reference_wrapper<const TheKeyType>, std::reference_wrapper<const TheItemType>>>
+    Contained(const TheKeyType& theKey) const
+  {
+    if (mySize == 0)
+      return std::nullopt;
+    size_t aIdx = 0;
+    if (!findSlotIndex(theKey, aIdx))
+      return std::nullopt;
+    return std::make_pair(std::cref(mySlots[aIdx].Key()), std::cref(mySlots[aIdx].Item()));
+  }
+
+  //! Contained returns optional pair of const key reference and mutable value reference.
+  //! Returns std::nullopt if the key is not found.
+  std::optional<
+    std::pair<std::reference_wrapper<const TheKeyType>, std::reference_wrapper<TheItemType>>>
+    Contained(const TheKeyType& theKey)
+  {
+    if (mySize == 0)
+      return std::nullopt;
+    size_t aIdx = 0;
+    if (!findSlotIndex(theKey, aIdx))
+      return std::nullopt;
+    return std::make_pair(std::cref(mySlots[aIdx].Key()), std::ref(mySlots[aIdx].Item()));
   }
 
   //! Find value by key, returns nullptr if not found
@@ -317,10 +417,10 @@ public:
   {
     if (mySize == 0)
       return nullptr;
-    const std::optional<size_t> aFoundIndex = findSlot(theKey);
-    if (aFoundIndex.has_value())
+    size_t aFoundIndex = 0;
+    if (findSlotIndex(theKey, aFoundIndex))
     {
-      return &mySlots[*aFoundIndex].Item();
+      return &mySlots[aFoundIndex].Item();
     }
     return nullptr;
   }
@@ -330,10 +430,10 @@ public:
   {
     if (mySize == 0)
       return nullptr;
-    const std::optional<size_t> aFoundIndex = findSlot(theKey);
-    if (aFoundIndex.has_value())
+    size_t aFoundIndex = 0;
+    if (findSlotIndex(theKey, aFoundIndex))
     {
-      return &mySlots[*aFoundIndex].Item();
+      return &mySlots[aFoundIndex].Item();
     }
     return nullptr;
   }
@@ -542,17 +642,17 @@ public:
     if (mySize == 0)
       return false;
 
-    const std::optional<size_t> aFoundIndex = findSlot(theKey);
-    if (!aFoundIndex.has_value())
+    size_t aFoundIndex = 0;
+    if (!findSlotIndex(theKey, aFoundIndex))
     {
       return false;
     }
 
-    const size_t aIndex = *aFoundIndex;
+    const size_t aIndex = aFoundIndex;
 
     mySlots[aIndex].Key().~TheKeyType();
     mySlots[aIndex].Item().~TheItemType();
-    mySlots[aIndex].myState = SlotState::Deleted;
+    mySlots[aIndex].SetEmpty();
     --mySize;
 
     backwardShiftDelete(aIndex);
@@ -568,15 +668,11 @@ public:
     {
       for (size_t i = 0; i < myCapacity; ++i)
       {
-        if (mySlots[i].myState == SlotState::Used)
+        if (mySlots[i].IsUsed())
         {
           mySlots[i].Key().~TheKeyType();
           mySlots[i].Item().~TheItemType();
-          mySlots[i].myState = SlotState::Empty;
-        }
-        else if (mySlots[i].myState == SlotState::Deleted)
-        {
-          mySlots[i].myState = SlotState::Empty;
+          mySlots[i].SetEmpty();
         }
       }
       mySize = 0;
@@ -599,10 +695,15 @@ public:
     std::swap(myHasher, theOther.myHasher);
   }
 
+  //! Returns const reference to the hasher.
+  const Hasher& GetHasher() const noexcept { return myHasher; }
+
   //! Reserve capacity for at least theN elements
   void reserve(size_t theN)
   {
-    size_t aNewCapacity = nextPowerOf2(theN + theN / 8); // ~87.5% load factor target
+    const size_t aMinCapacity =
+      (theN * THE_MAX_LOAD_DENOMINATOR + THE_MAX_LOAD_NUMERATOR - 1) / THE_MAX_LOAD_NUMERATOR;
+    size_t aNewCapacity = nextPowerOf2(aMinCapacity);
     if (aNewCapacity > myCapacity)
     {
       rehash(aNewCapacity);
@@ -623,6 +724,52 @@ public:
 
   //! Returns iterator past the end
   Iterator cend() const noexcept { return Iterator(); }
+
+public:
+  // **************** Key-value pair iteration support for structured bindings
+
+  //! Key-value pair reference for structured binding support.
+  //! Enables: for (auto [key, value] : map.Items())
+  using KeyValueRef = NCollection_ItemsView::KeyValueRef<TheKeyType, TheItemType, false>;
+
+  //! Const key-value pair reference for structured binding support.
+  using ConstKeyValueRef = NCollection_ItemsView::KeyValueRef<TheKeyType, TheItemType, true>;
+
+private:
+  //! Extractor for mutable key-value pairs
+  struct ItemsExtractor
+  {
+    static KeyValueRef Extract(const Iterator& theIter)
+    {
+      return {theIter.Key(), theIter.ChangeValue()};
+    }
+  };
+
+  //! Extractor for const key-value pairs
+  struct ConstItemsExtractor
+  {
+    static ConstKeyValueRef Extract(const Iterator& theIter)
+    {
+      return {theIter.Key(), theIter.Value()};
+    }
+  };
+
+public:
+  //! View class for key-value pair iteration (mutable).
+  using ItemsView =
+    NCollection_ItemsView::View<NCollection_FlatDataMap, KeyValueRef, ItemsExtractor, false>;
+
+  //! View class for key-value pair iteration (const).
+  using ConstItemsView = NCollection_ItemsView::
+    View<NCollection_FlatDataMap, ConstKeyValueRef, ConstItemsExtractor, true>;
+
+  //! Returns a view for key-value pair iteration.
+  //! Usage: for (auto [aKey, aValue] : aMap.Items())
+  ItemsView Items() { return ItemsView(*this); }
+
+  //! Returns a const view for key-value pair iteration.
+  //! Usage: for (const auto& [aKey, aValue] : aMap.Items())
+  ConstItemsView Items() const { return ConstItemsView(*this); }
 
 private:
   // **************** Internal implementation ****************
@@ -648,8 +795,9 @@ private:
   //! Ensure there's room for at least one more element
   void ensureCapacity()
   {
-    // Grow at ~87.5% load factor
-    if (myCapacity == 0 || (mySize + 1) * 8 > myCapacity * 7)
+    // Grow at ~81.25% load factor.
+    if (myCapacity == 0
+        || (mySize + 1) * THE_MAX_LOAD_DENOMINATOR > myCapacity * THE_MAX_LOAD_NUMERATOR)
     {
       size_t aNewCapacity = myCapacity == 0 ? THE_DEFAULT_CAPACITY : myCapacity * 2;
       rehash(aNewCapacity);
@@ -675,9 +823,11 @@ private:
     {
       for (size_t i = 0; i < aOldCapacity; ++i)
       {
-        if (aOldSlots[i].myState == SlotState::Used)
+        if (aOldSlots[i].IsUsed())
         {
-          insertImpl(std::move(aOldSlots[i].Key()), std::move(aOldSlots[i].Item()));
+          insertRehashedImpl(std::move(aOldSlots[i].Key()),
+                             std::move(aOldSlots[i].Item()),
+                             aOldSlots[i].myHash);
           aOldSlots[i].Key().~TheKeyType();
           aOldSlots[i].Item().~TheItemType();
         }
@@ -688,201 +838,159 @@ private:
 
   //! Find slot containing key.
   //! @param theKey key to find
-  //! @return index of found slot, or std::nullopt if not found
-  std::optional<size_t> findSlot(const TheKeyType& theKey) const
+  //! @param[out] theIndex found index
+  //! @return true if key was found
+  bool findSlotIndex(const TheKeyType& theKey, size_t& theIndex) const
   {
-    const size_t aHash     = myHasher(theKey);
-    const size_t aMask     = myCapacity - 1;
-    size_t       aIndex    = aHash & aMask;
-    uint8_t      aProbe    = 0;
-    const size_t aMaxProbe = myCapacity;
+    const size_t aHash  = myHasher(theKey);
+    const size_t aMask  = myCapacity - 1;
+    size_t       aIndex = aHash & aMask;
 
-    while (aProbe < aMaxProbe)
+    while (true)
     {
       const Slot& aSlot = mySlots[aIndex];
 
-      if (aSlot.myState == SlotState::Empty)
+      if (aSlot.IsEmpty())
       {
-        return std::nullopt;
+        return false;
       }
 
-      if (aSlot.myState == SlotState::Used && aSlot.myHash == aHash
-          && myHasher(aSlot.Key(), theKey))
+      if (aSlot.myHash == aHash && myHasher(aSlot.Key(), theKey))
       {
-        return aIndex;
+        theIndex = aIndex;
+        return true;
+      }
+      aIndex = (aIndex + 1) & aMask;
+    }
+  }
+
+  template <typename K, typename V, bool CheckExisting, bool UpdateExisting>
+  bool insertRehashedImpl(K&&          theKey,
+                          V&&          theItem,
+                          const size_t theHash,
+                          std::bool_constant<CheckExisting>,
+                          std::bool_constant<UpdateExisting>,
+                          size_t* theInsertedIndex = nullptr)
+  {
+    const size_t aMask             = myCapacity - 1;
+    size_t       aIndex            = theHash & aMask;
+    size_t       aProbe            = 0;
+    size_t       anInsertedIndex   = 0;
+    bool         aHasInsertedIndex = false;
+
+    TheKeyType  aKeyToInsert  = std::forward<K>(theKey);
+    TheItemType aItemToInsert = std::forward<V>(theItem);
+    size_t      aHashToInsert = theHash;
+
+    while (true)
+    {
+      Slot& aSlot = mySlots[aIndex];
+      if (aSlot.IsEmpty())
+      {
+        new (&aSlot.Key()) TheKeyType(std::move(aKeyToInsert));
+        new (&aSlot.Item()) TheItemType(std::move(aItemToInsert));
+        aSlot.myHash = aHashToInsert;
+        aSlot.SetProbeDistance(aProbe);
+        ++mySize;
+        if (theInsertedIndex != nullptr)
+        {
+          *theInsertedIndex = aHasInsertedIndex ? anInsertedIndex : aIndex;
+        }
+        return true;
       }
 
-      if (aSlot.myState == SlotState::Used && aProbe > aSlot.myProbeDistance)
+      if constexpr (CheckExisting)
       {
-        return std::nullopt;
+        if (aSlot.myHash == aHashToInsert && myHasher(aSlot.Key(), aKeyToInsert))
+        {
+          if constexpr (UpdateExisting)
+          {
+            aSlot.Item() = std::move(aItemToInsert);
+          }
+          if (theInsertedIndex != nullptr)
+          {
+            *theInsertedIndex = aIndex;
+          }
+          return false;
+        }
+      }
+
+      if (aProbe > aSlot.ProbeDistance())
+      {
+        std::swap(aKeyToInsert, aSlot.Key());
+        std::swap(aItemToInsert, aSlot.Item());
+        std::swap(aHashToInsert, aSlot.myHash);
+        const size_t aTmp = aProbe;
+        aProbe            = aSlot.ProbeDistance();
+        aSlot.SetProbeDistance(aTmp);
+        if (!aHasInsertedIndex)
+        {
+          anInsertedIndex   = aIndex;
+          aHasInsertedIndex = true;
+        }
       }
 
       ++aProbe;
       aIndex = (aIndex + 1) & aMask;
     }
-    return std::nullopt;
+  }
+
+  template <typename K, typename V>
+  void insertRehashedImpl(K&& theKey, V&& theItem, const size_t theHash)
+  {
+    (void)insertRehashedImpl(std::forward<K>(theKey),
+                             std::forward<V>(theItem),
+                             theHash,
+                             std::false_type{},
+                             std::false_type{});
   }
 
   template <typename K, typename V>
   bool insertImpl(K&& theKey, V&& theItem)
   {
-    const size_t aHash  = myHasher(theKey);
-    const size_t aMask  = myCapacity - 1;
-    size_t       aIndex = aHash & aMask;
-    uint8_t      aProbe = 0;
-
-    TheKeyType  aKeyToInsert  = std::forward<K>(theKey);
-    TheItemType aItemToInsert = std::forward<V>(theItem);
-    size_t      aHashToInsert = aHash;
-
-    while (true)
-    {
-      Slot& aSlot = mySlots[aIndex];
-
-      if (aSlot.myState == SlotState::Empty || aSlot.myState == SlotState::Deleted)
-      {
-        new (&aSlot.Key()) TheKeyType(std::move(aKeyToInsert));
-        new (&aSlot.Item()) TheItemType(std::move(aItemToInsert));
-        aSlot.myHash          = aHashToInsert;
-        aSlot.myProbeDistance = aProbe;
-        aSlot.myState         = SlotState::Used;
-        ++mySize;
-        return true;
-      }
-
-      if (aSlot.myState == SlotState::Used && aSlot.myHash == aHashToInsert
-          && myHasher(aSlot.Key(), aKeyToInsert))
-      {
-        aSlot.Item() = std::move(aItemToInsert);
-        return false;
-      }
-
-      if (aSlot.myState == SlotState::Used && aProbe > aSlot.myProbeDistance)
-      {
-        std::swap(aKeyToInsert, aSlot.Key());
-        std::swap(aItemToInsert, aSlot.Item());
-        std::swap(aHashToInsert, aSlot.myHash);
-        uint8_t aTmp          = aProbe;
-        aProbe                = aSlot.myProbeDistance;
-        aSlot.myProbeDistance = aTmp;
-      }
-
-      ++aProbe;
-      aIndex = (aIndex + 1) & aMask;
-
-      if (aProbe > THE_MAX_PROBE_DISTANCE)
-      {
-        throw Standard_OutOfRange("NCollection_FlatDataMap: excessive probe length");
-      }
-    }
+    const size_t aHash = myHasher(theKey);
+    return insertRehashedImpl(std::forward<K>(theKey),
+                              std::forward<V>(theItem),
+                              aHash,
+                              std::true_type{},
+                              std::true_type{});
   }
 
   template <typename K, typename V>
   bool tryInsertImpl(K&& theKey, V&& theItem)
   {
-    const size_t aHash  = myHasher(theKey);
-    const size_t aMask  = myCapacity - 1;
-    size_t       aIndex = aHash & aMask;
-    uint8_t      aProbe = 0;
-
-    TheKeyType  aKeyToInsert  = std::forward<K>(theKey);
-    TheItemType aItemToInsert = std::forward<V>(theItem);
-    size_t      aHashToInsert = aHash;
-
-    while (true)
-    {
-      Slot& aSlot = mySlots[aIndex];
-
-      if (aSlot.myState == SlotState::Empty || aSlot.myState == SlotState::Deleted)
-      {
-        new (&aSlot.Key()) TheKeyType(std::move(aKeyToInsert));
-        new (&aSlot.Item()) TheItemType(std::move(aItemToInsert));
-        aSlot.myHash          = aHashToInsert;
-        aSlot.myProbeDistance = aProbe;
-        aSlot.myState         = SlotState::Used;
-        ++mySize;
-        return true;
-      }
-
-      if (aSlot.myState == SlotState::Used && aSlot.myHash == aHashToInsert
-          && myHasher(aSlot.Key(), aKeyToInsert))
-      {
-        return false;
-      }
-
-      if (aSlot.myState == SlotState::Used && aProbe > aSlot.myProbeDistance)
-      {
-        std::swap(aKeyToInsert, aSlot.Key());
-        std::swap(aItemToInsert, aSlot.Item());
-        std::swap(aHashToInsert, aSlot.myHash);
-        uint8_t aTmp          = aProbe;
-        aProbe                = aSlot.myProbeDistance;
-        aSlot.myProbeDistance = aTmp;
-      }
-
-      ++aProbe;
-      aIndex = (aIndex + 1) & aMask;
-
-      if (aProbe > THE_MAX_PROBE_DISTANCE)
-      {
-        throw Standard_OutOfRange("NCollection_FlatDataMap: excessive probe length");
-      }
-    }
+    const size_t aHash = myHasher(theKey);
+    return insertRehashedImpl(std::forward<K>(theKey),
+                              std::forward<V>(theItem),
+                              aHash,
+                              std::true_type{},
+                              std::false_type{});
   }
 
   template <typename K, typename V, bool IsTry>
   TheItemType& insertRefImpl(K&& theKey, V&& theItem, std::bool_constant<IsTry>)
   {
     const size_t aHash  = myHasher(theKey);
-    const size_t aMask  = myCapacity - 1;
-    size_t       aIndex = aHash & aMask;
-    uint8_t      aProbe = 0;
-
-    TheKeyType  aKeyToInsert  = std::forward<K>(theKey);
-    TheItemType aItemToInsert = std::forward<V>(theItem);
-    size_t      aHashToInsert = aHash;
-
-    while (true)
+    size_t       aIndex = 0;
+    if constexpr (IsTry)
     {
-      Slot& aSlot = mySlots[aIndex];
-
-      if (aSlot.myState == SlotState::Empty || aSlot.myState == SlotState::Deleted)
-      {
-        new (&aSlot.Key()) TheKeyType(std::move(aKeyToInsert));
-        new (&aSlot.Item()) TheItemType(std::move(aItemToInsert));
-        aSlot.myHash          = aHashToInsert;
-        aSlot.myProbeDistance = aProbe;
-        aSlot.myState         = SlotState::Used;
-        ++mySize;
-        return aSlot.Item();
-      }
-
-      if (aSlot.myState == SlotState::Used && aSlot.myHash == aHashToInsert
-          && myHasher(aSlot.Key(), aKeyToInsert))
-      {
-        if constexpr (!IsTry)
-          aSlot.Item() = std::move(aItemToInsert);
-        return aSlot.Item();
-      }
-
-      if (aSlot.myState == SlotState::Used && aProbe > aSlot.myProbeDistance)
-      {
-        std::swap(aKeyToInsert, aSlot.Key());
-        std::swap(aItemToInsert, aSlot.Item());
-        std::swap(aHashToInsert, aSlot.myHash);
-        uint8_t aTmp          = aProbe;
-        aProbe                = aSlot.myProbeDistance;
-        aSlot.myProbeDistance = aTmp;
-      }
-
-      ++aProbe;
-      aIndex = (aIndex + 1) & aMask;
-
-      if (aProbe > THE_MAX_PROBE_DISTANCE)
-      {
-        throw Standard_OutOfRange("NCollection_FlatDataMap: excessive probe length");
-      }
+      (void)insertRehashedImpl(std::forward<K>(theKey),
+                               std::forward<V>(theItem),
+                               aHash,
+                               std::true_type{},
+                               std::false_type{},
+                               &aIndex);
     }
+    else
+    {
+      (void)insertRehashedImpl(std::forward<K>(theKey),
+                               std::forward<V>(theItem),
+                               aHash,
+                               std::true_type{},
+                               std::true_type{},
+                               &aIndex);
+    }
+    return mySlots[aIndex].Item();
   }
 
   template <typename K, bool IsTry, typename... Args>
@@ -891,7 +999,7 @@ private:
     const size_t aHash  = myHasher(theKey);
     const size_t aMask  = myCapacity - 1;
     size_t       aIndex = aHash & aMask;
-    uint8_t      aProbe = 0;
+    size_t       aProbe = 0;
 
     TheKeyType aKeyToInsert  = std::forward<K>(theKey);
     size_t     aHashToInsert = aHash;
@@ -900,35 +1008,33 @@ private:
     {
       Slot& aSlot = mySlots[aIndex];
 
-      if (aSlot.myState == SlotState::Empty || aSlot.myState == SlotState::Deleted)
+      if (aSlot.IsEmpty())
       {
         new (&aSlot.Key()) TheKeyType(std::move(aKeyToInsert));
         new (&aSlot.Item()) TheItemType(std::forward<Args>(theArgs)...);
-        aSlot.myHash          = aHashToInsert;
-        aSlot.myProbeDistance = aProbe;
-        aSlot.myState         = SlotState::Used;
+        aSlot.myHash = aHashToInsert;
+        aSlot.SetProbeDistance(aProbe);
         ++mySize;
         return true;
       }
 
-      if (aSlot.myState == SlotState::Used && aSlot.myHash == aHashToInsert
-          && myHasher(aSlot.Key(), aKeyToInsert))
+      if (aSlot.myHash == aHashToInsert && myHasher(aSlot.Key(), aKeyToInsert))
       {
         if constexpr (!IsTry)
           aSlot.Item() = TheItemType(std::forward<Args>(theArgs)...);
         return false;
       }
 
-      if (aSlot.myState == SlotState::Used && aProbe > aSlot.myProbeDistance)
+      if (aProbe > aSlot.ProbeDistance())
       {
         TheItemType aItemToInsert(std::forward<Args>(theArgs)...);
 
         std::swap(aKeyToInsert, aSlot.Key());
         std::swap(aItemToInsert, aSlot.Item());
         std::swap(aHashToInsert, aSlot.myHash);
-        uint8_t aTmp          = aProbe;
-        aProbe                = aSlot.myProbeDistance;
-        aSlot.myProbeDistance = aTmp;
+        const size_t aTmp = aProbe;
+        aProbe            = aSlot.ProbeDistance();
+        aSlot.SetProbeDistance(aTmp);
 
         ++aProbe;
         aIndex = (aIndex + 1) & aMask;
@@ -937,44 +1043,33 @@ private:
         {
           Slot& aSlot2 = mySlots[aIndex];
 
-          if (aSlot2.myState == SlotState::Empty || aSlot2.myState == SlotState::Deleted)
+          if (aSlot2.IsEmpty())
           {
             new (&aSlot2.Key()) TheKeyType(std::move(aKeyToInsert));
             new (&aSlot2.Item()) TheItemType(std::move(aItemToInsert));
-            aSlot2.myHash          = aHashToInsert;
-            aSlot2.myProbeDistance = aProbe;
-            aSlot2.myState         = SlotState::Used;
+            aSlot2.myHash = aHashToInsert;
+            aSlot2.SetProbeDistance(aProbe);
             ++mySize;
             return true;
           }
 
-          if (aSlot2.myState == SlotState::Used && aProbe > aSlot2.myProbeDistance)
+          if (aProbe > aSlot2.ProbeDistance())
           {
             std::swap(aKeyToInsert, aSlot2.Key());
             std::swap(aItemToInsert, aSlot2.Item());
             std::swap(aHashToInsert, aSlot2.myHash);
-            uint8_t aTmp2          = aProbe;
-            aProbe                 = aSlot2.myProbeDistance;
-            aSlot2.myProbeDistance = aTmp2;
+            const size_t aTmp2 = aProbe;
+            aProbe             = aSlot2.ProbeDistance();
+            aSlot2.SetProbeDistance(aTmp2);
           }
 
           ++aProbe;
           aIndex = (aIndex + 1) & aMask;
-
-          if (aProbe > THE_MAX_PROBE_DISTANCE)
-          {
-            throw Standard_OutOfRange("NCollection_FlatDataMap: excessive probe length");
-          }
         }
       }
 
       ++aProbe;
       aIndex = (aIndex + 1) & aMask;
-
-      if (aProbe > THE_MAX_PROBE_DISTANCE)
-      {
-        throw Standard_OutOfRange("NCollection_FlatDataMap: excessive probe length");
-      }
     }
   }
 
@@ -984,7 +1079,7 @@ private:
     const size_t aHash  = myHasher(theKey);
     const size_t aMask  = myCapacity - 1;
     size_t       aIndex = aHash & aMask;
-    uint8_t      aProbe = 0;
+    size_t       aProbe = 0;
 
     TheKeyType aKeyToInsert  = std::forward<K>(theKey);
     size_t     aHashToInsert = aHash;
@@ -993,35 +1088,33 @@ private:
     {
       Slot& aSlot = mySlots[aIndex];
 
-      if (aSlot.myState == SlotState::Empty || aSlot.myState == SlotState::Deleted)
+      if (aSlot.IsEmpty())
       {
         new (&aSlot.Key()) TheKeyType(std::move(aKeyToInsert));
         new (&aSlot.Item()) TheItemType(std::forward<Args>(theArgs)...);
-        aSlot.myHash          = aHashToInsert;
-        aSlot.myProbeDistance = aProbe;
-        aSlot.myState         = SlotState::Used;
+        aSlot.myHash = aHashToInsert;
+        aSlot.SetProbeDistance(aProbe);
         ++mySize;
         return aSlot.Item();
       }
 
-      if (aSlot.myState == SlotState::Used && aSlot.myHash == aHashToInsert
-          && myHasher(aSlot.Key(), aKeyToInsert))
+      if (aSlot.myHash == aHashToInsert && myHasher(aSlot.Key(), aKeyToInsert))
       {
         if constexpr (!IsTry)
           aSlot.Item() = TheItemType(std::forward<Args>(theArgs)...);
         return aSlot.Item();
       }
 
-      if (aSlot.myState == SlotState::Used && aProbe > aSlot.myProbeDistance)
+      if (aProbe > aSlot.ProbeDistance())
       {
         TheItemType aItemToInsert(std::forward<Args>(theArgs)...);
 
         std::swap(aKeyToInsert, aSlot.Key());
         std::swap(aItemToInsert, aSlot.Item());
         std::swap(aHashToInsert, aSlot.myHash);
-        uint8_t aTmp          = aProbe;
-        aProbe                = aSlot.myProbeDistance;
-        aSlot.myProbeDistance = aTmp;
+        const size_t aTmp = aProbe;
+        aProbe            = aSlot.ProbeDistance();
+        aSlot.SetProbeDistance(aTmp);
 
         TheItemType& aResult = aSlot.Item();
 
@@ -1032,44 +1125,33 @@ private:
         {
           Slot& aSlot2 = mySlots[aIndex];
 
-          if (aSlot2.myState == SlotState::Empty || aSlot2.myState == SlotState::Deleted)
+          if (aSlot2.IsEmpty())
           {
             new (&aSlot2.Key()) TheKeyType(std::move(aKeyToInsert));
             new (&aSlot2.Item()) TheItemType(std::move(aItemToInsert));
-            aSlot2.myHash          = aHashToInsert;
-            aSlot2.myProbeDistance = aProbe;
-            aSlot2.myState         = SlotState::Used;
+            aSlot2.myHash = aHashToInsert;
+            aSlot2.SetProbeDistance(aProbe);
             ++mySize;
             return aResult;
           }
 
-          if (aSlot2.myState == SlotState::Used && aProbe > aSlot2.myProbeDistance)
+          if (aProbe > aSlot2.ProbeDistance())
           {
             std::swap(aKeyToInsert, aSlot2.Key());
             std::swap(aItemToInsert, aSlot2.Item());
             std::swap(aHashToInsert, aSlot2.myHash);
-            uint8_t aTmp2          = aProbe;
-            aProbe                 = aSlot2.myProbeDistance;
-            aSlot2.myProbeDistance = aTmp2;
+            const size_t aTmp2 = aProbe;
+            aProbe             = aSlot2.ProbeDistance();
+            aSlot2.SetProbeDistance(aTmp2);
           }
 
           ++aProbe;
           aIndex = (aIndex + 1) & aMask;
-
-          if (aProbe > THE_MAX_PROBE_DISTANCE)
-          {
-            throw Standard_OutOfRange("NCollection_FlatDataMap: excessive probe length");
-          }
         }
       }
 
       ++aProbe;
       aIndex = (aIndex + 1) & aMask;
-
-      if (aProbe > THE_MAX_PROBE_DISTANCE)
-      {
-        throw Standard_OutOfRange("NCollection_FlatDataMap: excessive probe length");
-      }
     }
   }
 
@@ -1079,13 +1161,12 @@ private:
     size_t       aCurrent = theIndex;
     size_t       aNext    = (aCurrent + 1) & aMask;
 
-    while (mySlots[aNext].myState == SlotState::Used && mySlots[aNext].myProbeDistance > 0)
+    while (mySlots[aNext].IsUsed() && mySlots[aNext].ProbeDistance() > 0)
     {
       new (&mySlots[aCurrent].Key()) TheKeyType(std::move(mySlots[aNext].Key()));
       new (&mySlots[aCurrent].Item()) TheItemType(std::move(mySlots[aNext].Item()));
-      mySlots[aCurrent].myHash          = mySlots[aNext].myHash;
-      mySlots[aCurrent].myProbeDistance = mySlots[aNext].myProbeDistance - 1;
-      mySlots[aCurrent].myState         = SlotState::Used;
+      mySlots[aCurrent].myHash = mySlots[aNext].myHash;
+      mySlots[aCurrent].SetProbeDistance(mySlots[aNext].ProbeDistance() - 1);
 
       mySlots[aNext].Key().~TheKeyType();
       mySlots[aNext].Item().~TheItemType();
@@ -1094,7 +1175,7 @@ private:
       aNext    = (aNext + 1) & aMask;
     }
 
-    mySlots[aCurrent].myState = SlotState::Empty;
+    mySlots[aCurrent].SetEmpty();
   }
 
 private:

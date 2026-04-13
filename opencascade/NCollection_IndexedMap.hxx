@@ -19,11 +19,14 @@
 #include <NCollection_BaseMap.hxx>
 #include <NCollection_TListNode.hxx>
 #include <NCollection_StlIterator.hxx>
+#include <NCollection_ItemsView.hxx>
 #include <Standard_NoSuchObject.hxx>
 
 #include <NCollection_DefaultHasher.hxx>
 
 #include <Standard_OutOfRange.hxx>
+#include <functional>
+#include <optional>
 #include <type_traits>
 
 /**
@@ -132,6 +135,9 @@ public:
       return myMap == theOther.myMap && myIndex == theOther.myIndex;
     }
 
+    //! Returns current index (1-based).
+    int Index() const noexcept { return myIndex; }
+
   private:
     NCollection_IndexedMap* myMap;   // Pointer to the map being iterated
     int                     myIndex; // Current index
@@ -141,11 +147,46 @@ public:
   typedef NCollection_StlIterator<std::forward_iterator_tag, Iterator, TheKeyType, true>
     const_iterator;
 
+  //! Shorthand for iterator type (same as const_iterator for key-only maps).
+  typedef const_iterator iterator;
+
+  //! Returns an iterator pointing to the first element in the map.
+  iterator begin() const noexcept { return Iterator(*this); }
+
+  //! Returns an iterator referring to the past-the-end element in the map.
+  iterator end() const noexcept { return Iterator(); }
+
   //! Returns a const iterator pointing to the first element in the map.
   const_iterator cbegin() const noexcept { return Iterator(*this); }
 
   //! Returns a const iterator referring to the past-the-end element in the map.
   const_iterator cend() const noexcept { return Iterator(); }
+
+public:
+  // **************** Key-index pair iteration support for structured bindings
+
+  //! Key-index pair reference for structured binding support.
+  //! Enables: for (auto [key, index] : map.IndexedItems())
+  using KeyIndexRef = NCollection_ItemsView::KeyIndexRef<TheKeyType>;
+
+private:
+  //! Extractor for key-index pairs
+  struct IndexedItemsExtractor
+  {
+    static KeyIndexRef Extract(const Iterator& theIter)
+    {
+      return {theIter.Value(), theIter.Index()};
+    }
+  };
+
+public:
+  //! View class for key-index pair iteration.
+  using IndexedItemsView =
+    NCollection_ItemsView::View<NCollection_IndexedMap, KeyIndexRef, IndexedItemsExtractor, true>;
+
+  //! Returns a view for key-index pair iteration.
+  //! Usage: for (auto [aKey, anIndex] : aMap.IndexedItems())
+  IndexedItemsView IndexedItems() const { return IndexedItemsView(*this); }
 
 public:
   // ---------- PUBLIC METHODS ------------
@@ -164,22 +205,57 @@ public:
   {
   }
 
+  //! Constructor with custom hasher (copy).
+  //! @param theHasher custom hasher instance
+  //! @param theNbBuckets initial number of buckets
+  //! @param theAllocator custom memory allocator
+  explicit NCollection_IndexedMap(
+    const Hasher&                                 theHasher,
+    const int                                     theNbBuckets = 1,
+    const occ::handle<NCollection_BaseAllocator>& theAllocator = nullptr)
+      : NCollection_BaseMap(theNbBuckets, true, theAllocator),
+        myHasher(theHasher)
+  {
+  }
+
+  //! Constructor with custom hasher (move).
+  //! @param theHasher custom hasher instance (moved)
+  //! @param theNbBuckets initial number of buckets
+  //! @param theAllocator custom memory allocator
+  explicit NCollection_IndexedMap(
+    Hasher&&                                      theHasher,
+    const int                                     theNbBuckets = 1,
+    const occ::handle<NCollection_BaseAllocator>& theAllocator = nullptr)
+      : NCollection_BaseMap(theNbBuckets, true, theAllocator),
+        myHasher(std::move(theHasher))
+  {
+  }
+
   //! Copy constructor
   NCollection_IndexedMap(const NCollection_IndexedMap& theOther)
-      : NCollection_BaseMap(theOther.NbBuckets(), true, theOther.myAllocator)
+      : NCollection_BaseMap(theOther.NbBuckets(), true, theOther.myAllocator),
+        myHasher(theOther.myHasher)
   {
     *this = theOther;
   }
 
   //! Move constructor
   NCollection_IndexedMap(NCollection_IndexedMap&& theOther) noexcept
-      : NCollection_BaseMap(std::forward<NCollection_BaseMap>(theOther))
+      : NCollection_BaseMap(std::forward<NCollection_BaseMap>(theOther)),
+        myHasher(std::move(theOther.myHasher))
   {
   }
 
   //! Exchange the content of two maps without re-allocations.
   //! Notice that allocators will be swapped as well!
-  void Exchange(NCollection_IndexedMap& theOther) noexcept { this->exchangeMapsData(theOther); }
+  void Exchange(NCollection_IndexedMap& theOther) noexcept
+  {
+    this->exchangeMapsData(theOther);
+    std::swap(myHasher, theOther.myHasher);
+  }
+
+  //! Returns const reference to the hasher.
+  const Hasher& GetHasher() const noexcept { return myHasher; }
 
   //! Assign.
   //! This method does not change the internal allocator.
@@ -299,11 +375,39 @@ public:
     return emplaceImpl(std::false_type{}, std::true_type{}, std::forward<Args>(theArgs)...);
   }
 
+  //! TryEmplace constructs key in-place only if not already present.
+  //! @param theArgs arguments forwarded to key constructor
+  //! @return index of the key (new or existing)
+  template <typename... Args>
+  int TryEmplace(Args&&... theArgs)
+  {
+    return emplaceImpl(std::true_type{}, std::false_type{}, std::forward<Args>(theArgs)...);
+  }
+
+  //! TryEmplaced constructs key in-place only if not already present.
+  //! @param theArgs arguments forwarded to key constructor
+  //! @return const reference to the key (existing or newly added)
+  template <typename... Args>
+  const TheKeyType& TryEmplaced(Args&&... theArgs)
+  {
+    return emplaceImpl(std::true_type{}, std::true_type{}, std::forward<Args>(theArgs)...);
+  }
+
   //! Contains
   bool Contains(const TheKeyType& theKey1) const
   {
     IndexedMapNode* p;
     return lookup(theKey1, p);
+  }
+
+  //! Contained returns optional const reference to the key in the map.
+  //! Returns std::nullopt if the key is not found.
+  std::optional<std::reference_wrapper<const TheKeyType>> Contained(const TheKeyType& theKey1) const
+  {
+    IndexedMapNode* p;
+    if (!lookup(theKey1, p))
+      return std::nullopt;
+    return std::cref(p->Value());
   }
 
   //! Substitute

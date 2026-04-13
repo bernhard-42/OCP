@@ -17,6 +17,8 @@ exclude_namespaces = [
 "OpenGl_HashMapInitializer",
 "Graphic3d_TransformUtils",
 "GeomGridEval",
+"NCollection_ItemsView",
+"NCollection_ForwardRangeDetail",
 "occ"
 ]
 
@@ -26,8 +28,15 @@ modules = [
 "Standard",
 "gp",
 "math",
+"MathUtils",
+"MathRoot",
+"MathOpt",
+"MathLin",
+"MathSys",
+"MathInteg",
+"MathPoly",
 "BVH",
-"TColgp",
+"TColgp",  # deprecated but still needed for HArray1/HArray2/HSequence template registrations
 "OSD",
 "Quantity",
 "Storage",
@@ -59,16 +68,16 @@ modules = [
 "Geom2d",
 "Geom2dAdaptor",
 "LProp",
-"Geom2dLProp",
-"TColGeom2d",
+#"Geom2dLProp",  # removed in OCCT 8.0
+"TColGeom2d",  # deprecated but still needed for HArray1/HArray2/HSequence template registrations
 "Adaptor3d",
 "AdvApprox",
 "GProp",
 "Geom",
 "GeomAdaptor",
 "GeomLProp",
-"LProp3d",
-"TColGeom",
+#"LProp3d",  # removed in OCCT 8.0
+"TColGeom",  # deprecated but still needed for HArray1/HArray2/HSequence template registrations
 "TopAbs",
 "AdvApp2Var",
 "AppCont",
@@ -78,6 +87,7 @@ modules = [
 "BndLib",
 "CPnts",
 "Extrema",
+"ExtremaPC",
 "FEmTool",
 "GC",
 "GCE2d",
@@ -87,6 +97,10 @@ modules = [
 "GeomGridEval",
 "GeomHash",
 "Geom2dHash",
+"GeomBndLib",
+"GeomEval",
+"Geom2dEval",
+"Geom2dGridEval",
 "GeomLib",
 "GeomProjLib",
 "GeomTools",
@@ -97,6 +111,8 @@ modules = [
 "gce",
 "TopoDS",
 "BRep",
+"BRepGraph",
+"BRepGraphInc",
 "BRepAdaptor",
 "BRepLProp",
 "TopTools",
@@ -119,6 +135,7 @@ modules = [
 "GeomFill",
 "GeomInt",
 "GeomPlate",
+"PointSetLib",
 "Hatch",
 "HatchGen",
 "IntCurve",
@@ -134,7 +151,7 @@ modules = [
 "LocalAnalysis",
 "NLPlate",
 "Plate",
-"TopClass",
+#"TopClass",  # headers made private in OCCT 8.0
 "TopTrans",
 "BRepApprox",
 "BRepBndLib",
@@ -177,6 +194,7 @@ modules = [
 "TopBas",
 "TopCnx",
 "BRepMesh",
+"BRepPreviewAPI",
 "XBRepMesh",
 "BOPAlgo",
 "BOPDS",
@@ -208,7 +226,7 @@ modules = [
 "Aspect",
 "Font",
 "Image",
-"InterfaceGraphic",
+#"InterfaceGraphic",  # removed in OCCT 8.0
 "SelectBasics",
 #"TColQuantity",
 "Graphic3d",
@@ -216,14 +234,15 @@ modules = [
 "PrsMgr",
 "SelectMgr",
 "DsgPrs",
+"PrsDim",
 "Select3D",
 "StdPrs",
 "StdSelect",
 "V3d",
 "OpenGl",
 "MeshVS",
-"NIS",
-"Voxel",
+#"NIS",  # removed in OCCT 8.0
+#"Voxel",  # removed in OCCT 8.0
 "CDM",
 "CDF",
 "LDOM",
@@ -269,27 +288,27 @@ modules = [
 "StdStorage",
 "RWStl",
 "StlAPI",
-"RWStepBasic",
-"RWStepGeom",
-"RWStepRepr",
-"RWStepShape",
+#"RWStepBasic",  # headers made private (.pxx) in OCCT 8.0
+#"RWStepGeom",
+#"RWStepRepr",
+#"RWStepShape",
 "RWMesh",
 "StepBasic",
 "StepGeom",
 "StepRepr",
 "StepShape",
-"RWStepDimTol",
-"RWStepVisual",
+#"RWStepDimTol",
+#"RWStepVisual",
 "StepDimTol",
 "StepVisual",
-"RWStepElement",
-"RWStepFEA",
+#"RWStepElement",
+#"RWStepFEA",
 "StepElement",
 "StepFEA",
 "GeomToStep",
-"RWStepAP203",
-"RWStepAP214",
-"RWStepAP242",
+#"RWStepAP203",
+#"RWStepAP214",
+#"RWStepAP242",
 "STEPConstruct",
 "STEPControl",
 "STEPEdit",
@@ -299,6 +318,7 @@ modules = [
 "StepAP214",
 "StepAP242",
 "StepTidy",
+"StepKinematics",
 "StepToGeom",
 "StepToTopoDS",
 "TopoDSToStep",
@@ -345,6 +365,14 @@ modules = [
 "IVtkTools",
 "IVtkVTK",
 "DE",
+"DEBREP",
+"DESTEP",
+"DEIGES",
+"DEOBJ",
+"DESTL",
+"DEPLY",
+"DEVRML",
+"DEXCAF",
 "IMeshTools",
 "IMeshData",
 "APIHeaderSection",
@@ -399,16 +427,9 @@ class Adaptor3d_Surface;
 [OSX]
     modules = ["Cocoa"]
     symbols = "symbols_mangled_mac.dat"
-    prefix = "/usr/local/miniconda/envs/cpp-py-bindgen"
-    includes = ['/usr/local/Cellar/gcc@8/8.3.0_2/lib/gcc/8/gcc/x86_64-apple-darwin19/8.3.0/../../../../../../include/c++/8.3.0',
-                '/usr/local/Cellar/gcc@8/8.3.0_2/lib/gcc/8/gcc/x86_64-apple-darwin19/8.3.0/../../../../../../include/c++/8.3.0/x86_64-apple-darwin19',
-                '/usr/local/Cellar/gcc@8/8.3.0_2/lib/gcc/8/gcc/x86_64-apple-darwin19/8.3.0/../../../../../../include/c++/8.3.0/backward',
-                '/usr/local/Cellar/gcc@8/8.3.0_2/lib/gcc/8/gcc/x86_64-apple-darwin19/8.3.0/include',
-                '/usr/local/Cellar/gcc@8/8.3.0_2/lib/gcc/8/gcc/x86_64-apple-darwin19/8.3.0/include-fixed',
-                '/Library/Developer/CommandLineTools/SDKs/MacOSX10.15.sdk/usr/include',
-                '/Library/Developer/CommandLineTools/SDKs/MacOSX10.15.sdk/System/Library/Frameworks',
-                '/Library/Developer/CommandLineTools/SDKs/MacOSX10.15.sdk/System/Library/Frameworks//OpenGL.framework/Versions/A/Headers/',
-                '/usr/local/include']
+    # prefix is not used on ARM Mac (SDK paths passed via -i includes instead)
+    # prefix = ""
+    includes = []
 
 [Operators]
 
@@ -442,11 +463,34 @@ class Adaptor3d_Surface;
 
         exclude_methods = ["math_Matrix::operator="]
 
+    [Modules.MathLin]
+        # OCCT rc5 bug: MathLin::EigenResult lacks NbIterations (MathLin_Jacobi.hxx:90 uses it).
+        # Also, Clang resolves return type as MathUtils::EigenResult instead of MathLin::EigenResult
+        # due to 'using namespace MathUtils', causing static_cast failures.
+        exclude_functions = ["Jacobi", "EigenValues", "SpectralDecomposition"]
+
+    [Modules.MathSys]
+        # detail::Solve3x3/Solve4x4 take const double(*)[N] — pybind11 can't cast fixed-size array pointers
+        exclude_functions = ["Solve3x3", "Solve4x4"]
+
+    [Modules.BRepGraphInc]
+        # Options is auto-discovered by pywrap's nested-class descent.
+        # The same type is manually registered in Modules.BRepGraph (above)
+        # because BRepGraph loads alphabetically first and binds it as a
+        # default-arg value.  Skip auto-registration here to avoid the
+        # duplicate.
+        exclude_classes = ["BRepGraphInc_Populate::Options"]
+
+    [Modules.GeomLProp]
+        # Namespace-scoped class template that pywrap can't qualify
+        exclude_class_templates = ["ToolAccess"]
+
     [Modules.Standard]
 
         exclude_functions = ["HashCode"]
         exclude_methods = ["Standard_Dump::DumpCharacterValues","Standard_Dump::DumpRealValues",
-            "Standard_CLocaleSentry::GetCLocale","Standard_Dump::InitRealValues", "Standard_ErrorHandler::Label"]
+            "Standard_CLocaleSentry::GetCLocale","Standard_Dump::InitRealValues", "Standard_ErrorHandler::Label",
+            "Standard_ErrorHandler::Abort", "Standard_ErrorHandler::Error"]
 
     [Modules.Resource]
 
@@ -458,8 +502,16 @@ class Adaptor3d_Surface;
 #include <gp_XY.hxx>"""
         include_header_pre = """const size_t DefaultBlockSize = 24600;
 const size_t THE_DEFAULT_BLOCK_SIZE = DefaultBlockSize;"""
-        exclude_classes = ["NCollection","NCollection_ListNode"]
-        exclude_class_template_methods = [".*::begin", ".*::end", ".*::cbegin", ".*::cend"]
+        exclude_classes = ["NCollection","NCollection_ListNode",
+            "NCollection_ForwardRange"]
+        # NCollection_IndexedDataMap::Contained: OCCT rc5 bug (calls aNode->Key() but node has Key1())
+        # All Contained methods: return std::optional<std::reference_wrapper<const T>> which
+        # pybind11 can't cast when T is opencascade::handle<U>. Users can use Contains()+Find() instead.
+        # NCollection_Sequence constructor from initializer_list: pybind11 can't handle std::initializer_list<T> in py::init<>
+        exclude_class_template_methods = [".*::begin", ".*::end", ".*::cbegin", ".*::cend",
+            ".*::Contained",
+            ".*::Bound", ".*::Seek", ".*::ChangeSeek",
+            "NCollection_List::NCollection_List"]
 
         include_body_template_post="""
 template <typename T>
@@ -493,6 +545,139 @@ void register_template_NCollection_Vector(py::object &m, const char *name){
 
             "NCollection_CellFilter.hxx" = """#include <gp_XYZ.hxx>
 #include <gp_XY.hxx>"""
+            "NCollection_PackedMapAlgo.hxx" = "#include <NCollection_PackedMap.hxx>"
+
+    [Modules.BRepGraph]
+        # BRepGraphInc_Populate::Options is a nested struct used as default arg
+        # in BRepGraph methods. Must be registered here (not BRepGraphInc) because
+        # BRepGraph loads before BRepGraphInc alphabetically.
+        include_header_pre_top = "#include <BRepGraphInc_Populate.hxx>"
+        include_body_pre = """
+    py::class_<BRepGraphInc_Populate::Options>(m, "BRepGraphInc_Populate_Options")
+        .def(py::init<>())
+        .def_readwrite("ExtractRegularities", &BRepGraphInc_Populate::Options::ExtractRegularities)
+        .def_readwrite("ExtractVertexPointReps", &BRepGraphInc_Populate::Options::ExtractVertexPointReps)
+        .def_readwrite("CreateAutoProduct", &BRepGraphInc_Populate::Options::CreateAutoProduct);
+"""
+        exclude_class_templates = ["HasIsRemoved"]
+        [Modules.BRepGraph.parsing_headers]
+            "BRepGraph_MutGuard.hxx" = """#include <BRepGraph.hxx>
+#include <BRepGraphInc_Definition.hxx>"""
+            "BRepGraph_CacheKindIterator.hxx" = "#include <BRepGraph.hxx>"
+            # Inject NCollection_Vector<X> typedef aliases for every typed ID
+            # and BRepGraphInc::*Def/*Ref struct that BRepGraph methods use
+            # in their return types.  These typedefs aren't declared in the
+            # OCCT 8.0 BRepGraph headers (the templates are used inline in
+            # method signatures), so without injecting them pywrap doesn't
+            # see them, doesn't emit the matching
+            # `preregister_template_NCollection_Vector<T>(m, "...")` calls,
+            # and pybind11 raises `TypeError: Unable to convert function
+            # return value` at runtime when those methods are invoked.
+            #
+            # Naming convention follows OCCT (`<Module>_VectorOf<TypeShortName>`).
+            # Compile-time visibility of the typedef NAMES is irrelevant; the
+            # generated calls reference the underlying C++ type (e.g.
+            # `BRepGraph_FaceId`), which is already visible through the
+            # existing `#include <BRepGraph.hxx>` in BRepGraph_pre.cpp.
+            "BRepGraph.hxx" = """
+#include <BRepGraph_TopoView.hxx>
+#include <BRepGraph_RefsView.hxx>
+#include <BRepGraph_BuilderView.hxx>
+#include <BRepGraph_HistoryRecord.hxx>
+#include <BRepGraph_NodeId.hxx>
+#include <BRepGraph_RefId.hxx>
+#include <BRepGraph_RefUID.hxx>
+#include <BRepGraph_UID.hxx>
+#include <BRepGraphInc_Definition.hxx>
+#include <BRepGraphInc_Reference.hxx>
+#include <NCollection_Vector.hxx>
+
+using BRepGraph_VectorOfFaceId       = NCollection_Vector<BRepGraph_FaceId>;
+using BRepGraph_VectorOfEdgeId       = NCollection_Vector<BRepGraph_EdgeId>;
+using BRepGraph_VectorOfVertexId     = NCollection_Vector<BRepGraph_VertexId>;
+using BRepGraph_VectorOfWireId       = NCollection_Vector<BRepGraph_WireId>;
+using BRepGraph_VectorOfShellId      = NCollection_Vector<BRepGraph_ShellId>;
+using BRepGraph_VectorOfSolidId      = NCollection_Vector<BRepGraph_SolidId>;
+using BRepGraph_VectorOfCoEdgeId     = NCollection_Vector<BRepGraph_CoEdgeId>;
+using BRepGraph_VectorOfCompoundId   = NCollection_Vector<BRepGraph_CompoundId>;
+using BRepGraph_VectorOfCompSolidId  = NCollection_Vector<BRepGraph_CompSolidId>;
+using BRepGraph_VectorOfProductId    = NCollection_Vector<BRepGraph_ProductId>;
+using BRepGraph_VectorOfOccurrenceId = NCollection_Vector<BRepGraph_OccurrenceId>;
+using BRepGraph_VectorOfNodeId       = NCollection_Vector<BRepGraph_NodeId>;
+
+using BRepGraph_VectorOfRefId           = NCollection_Vector<BRepGraph_RefId>;
+using BRepGraph_VectorOfChildRefId      = NCollection_Vector<BRepGraph_ChildRefId>;
+using BRepGraph_VectorOfFaceRefId       = NCollection_Vector<BRepGraph_FaceRefId>;
+using BRepGraph_VectorOfCoEdgeRefId     = NCollection_Vector<BRepGraph_CoEdgeRefId>;
+using BRepGraph_VectorOfShellRefId      = NCollection_Vector<BRepGraph_ShellRefId>;
+using BRepGraph_VectorOfSolidRefId      = NCollection_Vector<BRepGraph_SolidRefId>;
+using BRepGraph_VectorOfVertexRefId     = NCollection_Vector<BRepGraph_VertexRefId>;
+using BRepGraph_VectorOfWireRefId       = NCollection_Vector<BRepGraph_WireRefId>;
+using BRepGraph_VectorOfOccurrenceRefId = NCollection_Vector<BRepGraph_OccurrenceRefId>;
+
+using BRepGraph_VectorOfUID    = NCollection_Vector<BRepGraph_UID>;
+using BRepGraph_VectorOfRefUID = NCollection_Vector<BRepGraph_RefUID>;
+
+using BRepGraph_VectorOfHistoryRecord = NCollection_Vector<BRepGraph_HistoryRecord>;
+
+using BRepGraph_VectorOfTriangulationRepId = NCollection_Vector<BRepGraph_TriangulationRepId>;
+using BRepGraph_VectorOfPolygonOnTriRepId  = NCollection_Vector<BRepGraph_PolygonOnTriRepId>;
+
+using BRepGraphInc_VectorOfFaceDef       = NCollection_Vector<BRepGraphInc::FaceDef>;
+using BRepGraphInc_VectorOfEdgeDef       = NCollection_Vector<BRepGraphInc::EdgeDef>;
+using BRepGraphInc_VectorOfCoEdgeDef     = NCollection_Vector<BRepGraphInc::CoEdgeDef>;
+using BRepGraphInc_VectorOfWireDef       = NCollection_Vector<BRepGraphInc::WireDef>;
+using BRepGraphInc_VectorOfShellDef      = NCollection_Vector<BRepGraphInc::ShellDef>;
+using BRepGraphInc_VectorOfSolidDef      = NCollection_Vector<BRepGraphInc::SolidDef>;
+using BRepGraphInc_VectorOfCompoundDef   = NCollection_Vector<BRepGraphInc::CompoundDef>;
+using BRepGraphInc_VectorOfCompSolidDef  = NCollection_Vector<BRepGraphInc::CompSolidDef>;
+using BRepGraphInc_VectorOfOccurrenceDef = NCollection_Vector<BRepGraphInc::OccurrenceDef>;
+
+using BRepGraphInc_VectorOfFaceRef   = NCollection_Vector<BRepGraphInc::FaceRef>;
+using BRepGraphInc_VectorOfCoEdgeRef = NCollection_Vector<BRepGraphInc::CoEdgeRef>;
+using BRepGraphInc_VectorOfShellRef  = NCollection_Vector<BRepGraphInc::ShellRef>;
+using BRepGraphInc_VectorOfSolidRef  = NCollection_Vector<BRepGraphInc::SolidRef>;
+using BRepGraphInc_VectorOfVertexRef = NCollection_Vector<BRepGraphInc::VertexRef>;
+using BRepGraphInc_VectorOfChildRef  = NCollection_Vector<BRepGraphInc::ChildRef>;
+
+// --- #16: nested helper-type vectors on public API surface ---------------
+#include <BRepGraph_Validate.hxx>
+#include <BRepGraph_RegularityLayer.hxx>
+#include <BRepGraph_ParamLayer.hxx>
+
+using BRepGraph_Validate_VectorOfIssue                  = NCollection_Vector<BRepGraph_Validate::Issue>;
+using BRepGraph_BuilderView_VectorOfBoundaryIssue       = NCollection_Vector<BRepGraph::BuilderView::BoundaryIssue>;
+using BRepGraph_RegularityLayer_VectorOfRegularityEntry = NCollection_Vector<BRepGraph_RegularityLayer::RegularityEntry>;
+using BRepGraph_ParamLayer_VectorOfPointOnCurveEntry    = NCollection_Vector<BRepGraph_ParamLayer::PointOnCurveEntry>;
+using BRepGraph_ParamLayer_VectorOfPointOnPCurveEntry   = NCollection_Vector<BRepGraph_ParamLayer::PointOnPCurveEntry>;
+using BRepGraph_ParamLayer_VectorOfPointOnSurfaceEntry  = NCollection_Vector<BRepGraph_ParamLayer::PointOnSurfaceEntry>;
+
+// --- #17: ForwardRangeIterator / DataMap typedefs deferred ---------------
+// NCollection_DataMap<...> uses in BRepGraph headers are all private fields.
+// NCollection_ForwardRangeIterator<X> typedefs tempting but trigger a
+// pre-existing pywrap codegen bug: the instantiation of the template's
+// operator* emission references `typename NCollection_ForwardRangeIterator
+// <HostType>::RawReturn`, which is a PRIVATE member typedef — compile error
+// ("is a private member").  The latent bug is unrelated to BRepGraph; it
+// affects any attempt to instantiate the template.  Python `for x in obj`
+// iteration still works via pywrap's `__iter__` / `py::make_iterator`
+// mechanism (doesn't need the iterator type registered).  Adding typedefs
+// here is blocked until the RawReturn codegen bug is resolved upstream
+// (filter private typedefs from method-pointer emission).
+"""
+
+    [Modules.Extrema]
+        [Modules.Extrema.parsing_headers]
+            "Extrema_GLocateExtPC.hxx" = "#include <GeomAbs_Shape.hxx>"
+            "Extrema_GGExtPC.hxx" = "#include <GeomAbs_Shape.hxx>"
+
+    [Modules.GeomGridEval]
+        [Modules.GeomGridEval.parsing_headers]
+            "GeomGridEval_Line.hxx" = "#include <gp_Lin.hxx>"
+
+    [Modules.Geom2dGridEval]
+        [Modules.Geom2dGridEval.parsing_headers]
+            "Geom2dGridEval_Line.hxx" = "#include <gp_Lin2d.hxx>"
 
     [Modules.OSD]
 
@@ -783,7 +968,7 @@ struct NSOpenGLContext {};"""
                            "OpenGl_DepthPeeling::DetachDepthTexture", "OpenGl_DepthPeeling::DepthPeelFbosOit",
                            "OpenGl_DepthPeeling::FrontBackColorFbosOit",
                            "OpenGl_SetterInterface::Set"]
-        exclude_typedefs = ["OpenGl_SequenceOfLayers","OpenGl_SetterList","OpenGl_MapOfHatchStylesAndIds","OpenGl_MapOfZLayerSettings","OpenGl_IndexedMapOfStructure","OpenGl_MapOfShaderPrograms","OpenGl_IndexedMapOfStructure","OpenGl_LayerSeqIds"]
+        exclude_typedefs = ["OpenGl_SequenceOfLayers","OpenGl_SetterList","OpenGl_MapOfHatchStylesAndIds","OpenGl_MapOfZLayerSettings","OpenGl_IndexedMapOfStructure","OpenGl_MapOfShaderPrograms","OpenGl_IndexedMapOfStructure","OpenGl_LayerSeqIds","StructIterator","GroupIterator"]
         exclude_classes = ["OpenGl_GraduatedTrihedron","OpenGl_LayerList","OpenGl_VariableSetterSelector","OpenGl_RaytraceGeometry"]
 
         [Modules.OpenGl.parsing_headers]
@@ -793,6 +978,7 @@ struct NSOpenGLContext {};"""
             "OpenGl_BufferCompatT.hxx" = "#include <Graphic3d_Buffer.hxx>"
             "OpenGl_VertexBufferCompat.hxx" = "#include <Graphic3d_Buffer.hxx>"
             "OpenGl_SetOfShaderPrograms.hxx" = "#include <TCollection_AsciiString.hxx>"
+            "OpenGl_ShaderProgram.hxx" = "class OpenGl_ShaderProgram;"
 
     [Modules.StdSelect]
 
@@ -810,10 +996,13 @@ struct NSOpenGLContext {};"""
 
     [Modules.AIS]
 
+        # Note: AIS_Manipulator::OptionsForAttach is auto-discovered by
+        # pywrap's nested-class descent; previous manual include_body_pre
+        # registration removed to avoid the duplicate.  The header-pre
+        # block below is kept for the unrelated #includes.
         include_header_pre = """#include <Media_PlayerContext.hxx>
 #include <WNT_HIDSpaceMouse.hxx>
 auto OptionsForAttach = [](){return AIS_Manipulator::OptionsForAttach();};"""
-        include_body_pre = "py::class_<AIS_Manipulator::OptionsForAttach>(m,\"AIS_Manipulator_OptionsForAttach\");"
         exclude_typedefs = ["AIS_DataMapOfShapeDrawer","AIS_DataMapOfIOStatus","AIS_DataMapOfILC","AIS_IndexedDataMapOfOwnerPrs"]
 
     [Modules.Font]
@@ -916,7 +1105,7 @@ struct NSOpenGLContext {};"""
 
         include_header_pre = """#include <TDF_RelocationTable.hxx>
 #include <TDF_DeltaOnModification.hxx>"""
-        exclude_typedefs = ["TObj_DataMapOfObjectHSequenceOcafObjects"]
+        exclude_typedefs = ["TObj_DataMapOfObjectHSequenceOcafObjects", "Iterator"]
 
     [Modules.StdObjMgt]
 
@@ -1415,7 +1604,7 @@ using rapidjson::BasicOStreamWrapper;"""
 
     [Modules.BRepTopAdaptor]
 
-        exclude_methods = ["BRepTopAdaptor_FClass2d::Copy"]
+        exclude_methods = ["BRepTopAdaptor_FClass2d::Copy", "BRepTopAdaptor_FClass2d::operator="]
 
         [Modules.BRepTopAdaptor.parsing_headers]
 
@@ -1562,3 +1751,67 @@ using rapidjson::BasicOStreamWrapper;"""
     [Modules.RWMesh]
 
         include_header_pre = "#include <OSD_FileSystem.hxx>"
+
+    # Geom/Geom2d: resolve forward-declared nested types from GeomEval/Geom2dEval
+    [Modules.Geom]
+        include_header_pre_top = """#include <GeomEval_RepCurveDesc.hxx>
+#include <GeomEval_RepSurfaceDesc.hxx>"""
+
+    [Modules.Geom2d]
+        include_header_pre_top = "#include <Geom2dEval_RepCurveDesc.hxx>"
+
+    # DE* modules: resolve forward declarations from DE_ConfigurationNode.hxx and DE_Provider.hxx
+    [Modules.DEBREP]
+        include_header_pre_top = """#include <DE_ConfigurationContext.hxx>
+#include <NCollection_Buffer.hxx>
+#include <TopoDS_Shape.hxx>
+#include <XSControl_WorkSession.hxx>
+#include <TDocStd_Document.hxx>"""
+
+    [Modules.DEIGES]
+        include_header_pre_top = """#include <DE_ConfigurationContext.hxx>
+#include <NCollection_Buffer.hxx>
+#include <TopoDS_Shape.hxx>
+#include <XSControl_WorkSession.hxx>
+#include <TDocStd_Document.hxx>"""
+
+    [Modules.DEOBJ]
+        include_header_pre_top = """#include <DE_ConfigurationContext.hxx>
+#include <NCollection_Buffer.hxx>
+#include <TopoDS_Shape.hxx>
+#include <XSControl_WorkSession.hxx>
+#include <TDocStd_Document.hxx>"""
+
+    [Modules.DEPLY]
+        include_header_pre_top = """#include <NCollection_Buffer.hxx>
+#include <TopoDS_Shape.hxx>
+#include <XSControl_WorkSession.hxx>
+#include <TDocStd_Document.hxx>"""
+
+    [Modules.DESTEP]
+        include_header_pre_top = """#include <DE_ConfigurationContext.hxx>
+#include <NCollection_Buffer.hxx>
+#include <TopoDS_Shape.hxx>
+#include <XSControl_WorkSession.hxx>
+#include <TDocStd_Document.hxx>"""
+
+    [Modules.DESTL]
+        include_header_pre_top = """#include <DE_ConfigurationContext.hxx>
+#include <NCollection_Buffer.hxx>
+#include <TopoDS_Shape.hxx>
+#include <XSControl_WorkSession.hxx>
+#include <TDocStd_Document.hxx>"""
+
+    [Modules.DEVRML]
+        include_header_pre_top = """#include <DE_ConfigurationContext.hxx>
+#include <NCollection_Buffer.hxx>
+#include <TopoDS_Shape.hxx>
+#include <XSControl_WorkSession.hxx>
+#include <TDocStd_Document.hxx>"""
+
+    [Modules.DEXCAF]
+        include_header_pre_top = """#include <DE_ConfigurationContext.hxx>
+#include <NCollection_Buffer.hxx>
+#include <TopoDS_Shape.hxx>
+#include <XSControl_WorkSession.hxx>
+#include <TDocStd_Document.hxx>"""
