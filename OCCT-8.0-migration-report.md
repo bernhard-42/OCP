@@ -4,6 +4,8 @@ Each section is tagged with the phase of work it belongs to:
 
 - `[7.9-to-8rc3]` — initial 7.9 → 8.0 rc3 migration
 - `[8rc3-to-8rc5]` — rc3 → rc5 follow-up
+- `[8rc5-post]` — post-rc5 pywrap/ocp.toml work exposing new public APIs (BRepGraph)
+- `[8rc5-to-8final]` — rc5 → 8.0.0 final release migration
 
 ## Table of Contents
 
@@ -64,6 +66,28 @@ Each section is tagged with the phase of work it belongs to:
 - [8.1 RapidJSON CMake variable case](#81-rapidjson-cmake-variable-case)
 - [8.2 macOS ARM clang include path handling](#82-macos-arm-clang-include-path-handling)
 - [8.3 CMake: `target_compile_options` instead of deprecated `COMPILE_FLAGS`](#83-cmake-target_compile_options-instead-of-deprecated-compile_flags)
+
+### 9 BRepGraph public-API enablement `[8rc5-post]`
+
+- [9.1 Nested-class discovery and DAG edges](#91-nested-class-discovery-and-dag-edges)
+- [9.2 Access-level filter and nested-type qualification](#92-access-level-filter-and-nested-type-qualification)
+- [9.3 NCollection typedef injection in `ocp.toml`](#93-ncollection-typedef-injection-in-ocptoml)
+- [9.4 Field-emission gate widening and typedef-type restriction](#94-field-emission-gate-widening-and-typedef-type-restriction)
+- [9.5 Conversion operators bound as named methods](#95-conversion-operators-bound-as-named-methods)
+- [9.6 `class_alias_typedefs` — primitive-alias rejection](#96-class_alias_typedefs--primitive-alias-rejection)
+
+### 10 rc5 → 8.0.0 final `[8rc5-to-8final]`
+
+- [10.1 Header sync and deleted/restored headers](#101-header-sync-and-deletedrestored-headers)
+- [10.2 `NCollection_Vector` → `NCollection_DynamicArray` rename](#102-ncollection_vector--ncollection_dynamicarray-rename)
+- [10.3 `NCollection_LinearVector` template registration](#103-ncollection_linearvector-template-registration)
+- [10.4 BRepGraph API renames](#104-brepgraph-api-renames)
+- [10.5 `BRepGraphInc_Populate::Options` field removal](#105-brepgraphinc_populateoptions-field-removal)
+- [10.6 `PointSetLib` module removed](#106-pointsetlib-module-removed)
+- [10.7 `MathLin_Jacobi.hxx` header exclusion](#107-mathlin_jacobihxx-header-exclusion)
+- [10.8 Builtin type qualification in non-type template parameters](#108-builtin-type-qualification-in-non-type-template-parameters)
+- [10.9 Namespace-sibling type qualification for nested classes](#109-namespace-sibling-type-qualification-for-nested-classes)
+- [10.10 Symbols file regeneration](#1010-symbols-file-regeneration)
 
 ---
 
@@ -1706,5 +1730,399 @@ The `COMPILE_FLAGS` target property (used previously to inject `-fpermissive`, `
 ```
 
 Known residual issue: Apple Clang 21 does not honor `-Wno-deprecated-declarations` for `__attribute__((deprecated))` attributes on overloaded function addresses, so ~200 deprecation warnings remain. This is a compiler bug (or deliberate restriction) — confirmed via minimal standalone reproducer — not a pywrap issue.
+
+---
+
+# 9 BRepGraph public-API enablement `[8rc5-post]`
+
+The rc5 migration's 332-module smoke test only validated that every module imports cleanly. When an actual BRepGraph workflow was exercised from Python (`Graph(Box(10,20,20)).dump()` via a small `build123d_8` playground package), a chain of binding gaps surfaced:
+
+- Grouped-view nested classes (`TopoView::FaceOps`, `RefsView::ShellOps`, etc.) were silently dropped.
+- Templated ID classes (`BRepGraph_NodeId::Typed<Kind>` and the `SolidId`/`FaceId`/… typedefs) had no public fields and could not be implicitly converted to `BRepGraph_NodeId` at call time.
+- Public fields of type `NCollection_Vector<TypedId>` on Definition/Reference structs were silently dropped.
+- Primitive typedef aliases (`GLint = int`, `Standard_Integer = int`) were leaking into the implicit-conversion filter and causing `ImportError: Unable to find type int` at module load.
+
+The fixes below are *generic* pywrap codegen improvements (not BRepGraph-specific) plus BRepGraph-specific `ocp.toml` typedef injection. They carry forward to rc6 / final 8.0 unchanged.
+
+## 9.1 Nested-class discovery and DAG edges
+
+**Problem.** Grouped-view nested classes like `BRepGraph::TopoView::FaceOps` were parsed by libclang but never emitted in the generated bindings. `TopoView.Faces()` returns a `FaceOps` instance; without binding `FaceOps`, pybind11 cannot return it.
+
+**Root cause.** `get_classes()` in `pywrap/bindgen/header.py` did not descend into nested classes. Only top-level classes were collected.
+
+**Fix.** `get_classes()` recursively descends into `CLASS_DECL` / `STRUCT_DECL` children of every visited class. Additionally, `pywrap/bindgen/__init__.py` adds a **nested→enclosing edge** to the module dependency DAG so typedefs inside a nested class can resolve before their enclosing class is bound.
+
+```python
+# header.py: get_classes() descends into nested classes
+for c in cursor.get_children():
+    if c.kind in (CursorKind.CLASS_DECL, CursorKind.STRUCT_DECL):
+        if c.access_specifier == AccessSpecifier.PUBLIC:
+            yield from get_classes(c, ...)   # recurse
+        yield ClassInfo(c, ...)
+```
+
+## 9.2 Access-level filter and nested-type qualification
+
+**Problem 1.** After 9.1, `get_symbols()` was also descending into **non-public** nested classes, emitting bindings for private types.
+
+**Fix.** `get_symbols()` refuses descent into a class whose access specifier is not `PUBLIC`.
+
+**Problem 2.** Methods on nested classes referenced other nested types by their bare name (e.g. `FaceOps` returning `FaceDef`), but pywrap generated `FaceDef` literally in the method signature — clang rejects it because `FaceDef` isn't visible at file scope; it's `BRepGraph::TopoView::FaceDef`.
+
+**Fix.** `_qualify_nested_types()` walks the enclosing-class hierarchy and collects all nested-type names, then qualifies bare references in return types and arg types. A guard (`is_scoped_enum()`) avoids inadvertently qualifying unscoped enum constants that are pulled in by the hierarchy walk.
+
+**Problem 3 (`ocp.toml`).** `BRepGraphInc_Populate::Options` was registered twice — once via `BRepGraph`'s alphabetical-first load and again via `BRepGraphInc` — causing a pybind11 "type already registered" error.
+
+**Fix.**
+
+```toml
+[Modules.BRepGraphInc]
+exclude_classes = ["BRepGraphInc_Populate::Options"]
+```
+
+## 9.3 NCollection typedef injection in `ocp.toml`
+
+**Problem.** Grouped views return `NCollection_Vector<BRepGraph_SolidId>`, `NCollection_Vector<BRepGraph_ShellRefId>`, etc. pywrap's template-instantiation machinery binds `NCollection_Vector<X>` only when it sees a typedef naming that exact instantiation. OCCT 8.0's BRepGraph headers don't declare those typedefs — the types only appear as method return types.
+
+**Fix.** Inject 47 typedef declarations into `ocp.toml`'s `parsing_headers["BRepGraph.hxx"]` so pywrap's parse sees them as first-class typedefs:
+
+- 11 forward vectors for each Kind: `BRepGraph_VectorOfSolidId = NCollection_Vector<BRepGraph_SolidId>`, …, `BRepGraph_VectorOfOccurrenceId`.
+- 8 Ref vectors for RefId kinds.
+- 6 RepId vectors.
+- 6 nested helper-type vectors (`BRepGraph_Validate::Issue`, `BRepGraph::BuilderView::BoundaryIssue`, `BRepGraph_RegularityLayer::RegularityEntry`, three `BRepGraph_ParamLayer::PointOn*Entry`).
+
+Naming convention: `BRepGraph_VectorOf<Short>` (or `BRepGraphInc_VectorOf<Short>` for BRepGraphInc types). Documented in `project_brepgraph_binding_followups` memory note.
+
+## 9.4 Field-emission gate widening and typedef-type restriction
+
+**Problem.** Even with 9.3's typedefs in place, public fields of type `NCollection_Vector<SolidId>` on structs like `BRepGraphInc::SolidDef::ShellRefIds` were silently dropped. The field-emission gate in `template_sub.j2:186` only checked `f.type in all_typedefs` (typedef *names*) — but the field type is declared as the full template instantiation string `NCollection_Vector<BRepGraph_ShellRefId>`, not as the typedef name.
+
+**Fix (two parts).**
+
+**Part 1 — widen the gate.** `all_typedef_types` (the set of typedef *underlying type strings*) is now exposed to the template. The gate accepts `f.type in all_typedef_types` in addition to the existing checks.
+
+```jinja
+{% for f in c.fields if f.type in all_classes or f.type in all_enums
+    or f.type in all_typedefs or f.type in all_typedef_types
+    or f.type in settings['byref_types'] %}
+```
+
+**Part 2 — restrict `all_typedef_types`.** Without restriction, primitive typedef aliases (`Standard_Integer = int`, `GLint = int`) would add `"int"` to `all_typedef_types`, causing pywrap to emit `.def_readwrite("Flags", &T::Flags)` on bit-field members — which fails to compile with `address of bit-field requested`. The set is therefore restricted to typedefs that are **template instantiations** (`template_base` non-empty):
+
+```python
+all_typedef_types = {
+    t.type for m in modules for t in m.typedefs if t.template_base
+}
+```
+
+**Part 3 — field emission on class templates.** `template_templates.j2` was not emitting `.def_readwrite` for fields on `class_template` classes at all. Added a mirror of the concrete-class gate so public fields like `BRepGraph_NodeId::Typed<Kind>::Index` become visible.
+
+## 9.5 Conversion operators bound as named methods
+
+**Discovery.** A discrete Python test confirmed that `py::implicitly_convertible<Src, Target>()` emissions in OCP are **dead code** at runtime. OCP has shipped 210+ such emissions for years, but the pybind11 pathway (`PyObject_Call((PyObject*)TargetType, args)`) requires Target to have a pybind-registered single-arg ctor accepting Src — which OCCT target classes never provide.
+
+Empirical evidence:
+
+```python
+>>> mk = BRepPrimAPI_MakeBox(gp_Pnt(0,0,0), 10, 10, 10)
+>>> isinstance(mk, TopoDS_Shape)
+False
+>>> BRepTools.Dump_s(mk, io.StringIO())
+TypeError: Dump_s(): incompatible function arguments...
+```
+
+OCP users have always called explicit methods (`.Shape()` on `MakeBox`), so nobody noticed `implicitly_convertible` never fired.
+
+**Problem (BRepGraph-specific).** `BRepGraph_SolidId = BRepGraph_NodeId::Typed<Kind::Solid>` has `operator BRepGraph_NodeId() const`, but no explicit `.NodeId()` method existed. Every API accepting `BRepGraph_NodeId` (e.g. `UIDs().Of(node)`) rejected `SolidId` instances.
+
+**Fix.** pywrap now discovers conversion operators (`get_public_conversion_operators()` in `header.py`, new `ConversionOperatorInfo` attached to `ClassInfo.conversion_operators` and `ClassTemplateInfo.conversion_operators`) and emits each as a Python method named after the target type.
+
+```cpp
+// In template_sub.j2 / template_templates.j2 class body:
+.def("TopoDS_Shape",
+     [](BRepBuilderAPI_MakeShape &self) -> TopoDS_Shape { return TopoDS_Shape(self); },
+     R"#(Convert to TopoDS_Shape.)#")
+.def("BRepGraph_NodeId",
+     [](BRepGraph_NodeId::Typed<TheKind> &self) -> BRepGraph_NodeId { return BRepGraph_NodeId(self); },
+     R"#(Convert to BRepGraph_NodeId.)#")
+```
+
+Method name: target type with `::` → `_`.  Non-const `self` handles both const (`Typed<K>::operator NodeId() const`) and non-const (`MakeShape::operator TopoDS_Shape()`) operators.  Lambda uses paren-init `Target(self)` to trigger user-defined conversion (brace-init `Target{self}` would not).
+
+Python usage:
+
+```python
+solid_id.BRepGraph_NodeId()      # Typed<Solid> → NodeId
+make_box.TopoDS_Solid()          # MakeBox → TopoDS_Solid (complements .Shape())
+```
+
+**`implicitly_convertible` retained.** The existing emissions are kept alongside the new method bindings — they're harmless and self-document the conversion pairs in pybind's registry, and will live-fire automatically if a future pybind or target-ctor change closes the gap.
+
+**Caveat.** Reference and pointer target types (`operator Standard_OStream&()`, `operator gp_Pnt*()`) cannot participate in pybind's implicit conversion system at all; filter rejects them early by suffix.
+
+## 9.6 `class_alias_typedefs` — primitive-alias rejection
+
+**Problem.** After 9.5's emission machinery was live, a new import error appeared: `ImportError: implicitly_convertible: Unable to find type int`. The offender was `OpenGl_ShaderUniformLocation::operator GLint()`. `GLint` is a typedef for `int` in OpenGL headers; pybind cannot accept a primitive as an implicit-conversion target.
+
+**Why the existing filter missed it.** The emission filter checked `target in all_typedefs` (typedef *names*). `GLint` is a valid typedef name, so it passed. At runtime pybind unwraps `GLint` to `int` and fails.
+
+**Fix.** A new derived set `class_alias_typedefs` in `pywrap/bindgen/__init__.py` contains only typedefs whose *underlying type* resolves to a registered class or template instantiation:
+
+```python
+class_alias_typedefs = {
+    t.name
+    for m in modules
+    for t in m.typedefs
+    if t.type.replace("const ", "").strip() in all_classes
+    or t.type.replace("const ", "").strip() in all_typedef_types
+    or t.type.replace("const ", "").strip() in all_class_templates
+}
+```
+
+Both templates (`template_sub.j2`, `template_templates.j2`) now use `class_alias_typedefs` in place of `all_typedefs` in the conversion-operator target filter. Primitive-aliasing typedefs (`GLint`, `Standard_Integer`, `Standard_Real`, etc.) are filtered out before either the method-binding emission or the `implicitly_convertible` emission.
+
+---
+
+# 10 rc5 → 8.0.0 final `[8rc5-to-8final]`
+
+OCCT 8.0.0 final was released with 312 header changes vs rc5: 263 modified, 8 removed, 24 added (when built with VTK). The largest single change is the `NCollection_Vector` → `NCollection_DynamicArray` rename (131 files). The BRepGraph module underwent extensive API renames and restructuring. `PointSetLib` was un-deprecated back into `GProp`. The `NCollection_LinearVector` class template was added as a contiguous flat-buffer replacement for `std::vector` in public OCCT APIs.
+
+All changes below are purely in `ocp.toml` and `pywrap/bindgen/header.py` — no Jinja template changes were needed.
+
+## 10.1 Header sync and deleted/restored headers
+
+`[8rc5-to-8final]`
+
+Synced headers from `/opt/local/occt-8.0.0-vtk/include/opencascade/` via `rsync --delete`. Key changes:
+
+**Removed in final (8 files):**
+
+| File | Reason |
+|------|--------|
+| `BRepGraph_BuilderView.hxx` | Renamed to `BRepGraph_EditorView.hxx` |
+| `BRepGraph_ParamLayer.hxx` | Renamed to `BRepGraph_LayerParam.hxx` |
+| `BRepGraph_RegularityLayer.hxx` | Renamed to `BRepGraph_LayerRegularity.hxx` |
+| `BRepGraphInc_Usage.hxx` | Renamed to `BRepGraphInc_Instance.hxx` |
+| `NCollection_BasePointerVector.hxx` | Replaced by `NCollection_LinearVector` |
+| `PointSetLib_Equation.hxx` | Un-deprecated back into `GProp_PEquation` |
+| `PointSetLib_Props.hxx` | Un-deprecated back into `GProp_PGProps` |
+| `GeomBndLib_InfiniteHelpers.pxx` | Inlined (but still referenced by installed headers — manually copied back from OCCT source tree, same as rc5) |
+
+**Added in final (24 files):** `BRepGraph_EditorView.hxx`, `BRepGraph_LayerParam.hxx`, `BRepGraph_LayerRegularity.hxx`, `BRepGraph_MeshCache.hxx`, `BRepGraph_MeshView.hxx`, `BRepGraph_ReverseIterator.hxx`, `BRepGraphInc_Instance.hxx`, `NCollection_LinearVector.hxx`, `Aspect_GridParams.hxx`, `Graphic3d_Flipper.hxx`, `IntPatch_BVHTraversal.hxx`, `IntPatch_PolyhedronBVH.hxx`, `IntCurve_IntConicConic_Tool.hxx`, plus 11 restored backward-compat typedef headers (`BOPDS_*`, `DBRep_*`, `DDF_*`, `Draw_*`, `Graphic3d_MapIteratorOfMapOfStructure.hxx`, `TObj_Container.hxx`).
+
+**Restored compat headers that fail to parse/compile:** Six of the restored backward-compat typedef headers (`BOPDS_DataMapOfIntegerListOfPaveBlock.hxx`, `BOPDS_VectorOfListOfPaveBlock.hxx`, `BOPDS_DataMapOfPaveBlockListOfPaveBlock.hxx`, `BOPDS_IndexedDataMapOfPaveBlockListOfPaveBlock.hxx`, `Graphic3d_MapIteratorOfMapOfStructure.hxx`, `TObj_Container.hxx`) `#include` private headers that aren't installed. pywrap skips them at parse time (harmless "file not found" warnings). They were deleted from the local `opencascade/` copy to prevent compile errors in the generated bindings, which transitively include all module headers.
+
+---
+
+## 10.2 `NCollection_Vector` → `NCollection_DynamicArray` rename
+
+`[8rc5-to-8final]`
+
+OCCT 8.0.0 final renamed the `NCollection_Vector` class template to `NCollection_DynamicArray`. A deprecated compat header (`NCollection_Vector.hxx`) defines `NCollection_Vector<T>` as a `template using` alias for `NCollection_DynamicArray<T>`. No final-release header references `NCollection_Vector` — the alias exists only for downstream compatibility.
+
+All 47 injected typedefs in `ocp.toml`'s `parsing_headers["BRepGraph.hxx"]` were updated from `NCollection_Vector<T>` to `NCollection_DynamicArray<T>`, along with the `#include` directive and comments. The `STEPCAFControl_Writer` parsing_headers entry was also updated.
+
+The `include_body_template_post` forwarding stubs (`preregister_template_NCollection_Vector` → `preregister_template_NCollection_DynamicArray`) from the rc5 migration were retained as a safety net but are now dead code — no header produces typedefs with `NCollection_Vector` as template base.
+
+**ocp.toml** — parsing_headers include
+
+```diff
+- #include <NCollection_Vector.hxx>
++ #include <NCollection_DynamicArray.hxx>
+```
+
+**ocp.toml** — injected typedefs (47 entries, showing pattern)
+
+```diff
+- using BRepGraph_VectorOfFaceId = NCollection_Vector<BRepGraph_FaceId>;
++ using BRepGraph_VectorOfFaceId = NCollection_DynamicArray<BRepGraph_FaceId>;
+```
+
+**ocp.toml** — STEPCAFControl_Writer
+
+```diff
+- "STEPCAFControl_Writer.hxx" = "#include <NCollection_Vector.hxx>"
++ "STEPCAFControl_Writer.hxx" = "#include <NCollection_DynamicArray.hxx>"
+```
+
+---
+
+## 10.3 `NCollection_LinearVector` template registration
+
+`[8rc5-to-8final]`
+
+New contiguous flat-buffer class template replacing `std::vector` in ~19 OCCT headers (`BOPTools_PairSelector`, `STEPCAFControl_Reader`, `Graphic3d_FrameStatsData`, `ShapeProcess`, `RWGltf_CafWriter`, `BVH_*`, `OpenGl_*`, `SelectMgr_*`, etc.). Added to the NCollection template config so pywrap knows how to register instantiations.
+
+No typedefs for `NCollection_LinearVector` exist in any currently-bound module (the only public typedefs `IntWalk_VectorOfInteger` and `IntWalk_VectorOfWalkingData` are in the disabled `IntWalk` module, and all other usages are internal/private). The template entry is in place for when future typedefs appear.
+
+The existing `exclude_class_template_methods` globs (`".*::begin"`, `".*::end"`, etc.) already cover iterator methods on any NCollection template.
+
+**ocp.toml**
+
+```toml
+[Modules.NCollection.Templates.NCollection_LinearVector]
+```
+
+---
+
+## 10.4 BRepGraph API renames
+
+`[8rc5-to-8final]`
+
+Four BRepGraph headers were renamed in final. All references in `ocp.toml`'s `parsing_headers["BRepGraph.hxx"]` block were updated — includes, injected typedef names, and nested class references.
+
+| rc5 | final |
+|-----|-------|
+| `BRepGraph_BuilderView.hxx` | `BRepGraph_EditorView.hxx` |
+| `BRepGraph_ParamLayer.hxx` | `BRepGraph_LayerParam.hxx` |
+| `BRepGraph_RegularityLayer.hxx` | `BRepGraph_LayerRegularity.hxx` |
+| `BRepGraphInc_Usage.hxx` | `BRepGraphInc_Instance.hxx` |
+
+**ocp.toml** — includes in parsing_headers
+
+```diff
+- #include <BRepGraph_BuilderView.hxx>
++ #include <BRepGraph_EditorView.hxx>
+- #include <BRepGraph_RegularityLayer.hxx>
++ #include <BRepGraph_LayerRegularity.hxx>
+- #include <BRepGraph_ParamLayer.hxx>
++ #include <BRepGraph_LayerParam.hxx>
+```
+
+**ocp.toml** — injected typedef names
+
+```diff
+- using BRepGraph_BuilderView_VectorOfBoundaryIssue       = ...BRepGraph::BuilderView::BoundaryIssue>;
++ using BRepGraph_EditorView_VectorOfBoundaryIssue        = ...BRepGraph::EditorView::BoundaryIssue>;
+- using BRepGraph_RegularityLayer_VectorOfRegularityEntry = ...BRepGraph_RegularityLayer::RegularityEntry>;
++ using BRepGraph_LayerRegularity_VectorOfRegularityEntry = ...BRepGraph_LayerRegularity::RegularityEntry>;
+- using BRepGraph_ParamLayer_VectorOfPointOnCurveEntry    = ...BRepGraph_ParamLayer::PointOnCurveEntry>;
++ using BRepGraph_LayerParam_VectorOfPointOnCurveEntry    = ...BRepGraph_LayerParam::PointOnCurveEntry>;
+```
+
+(Same pattern for `PointOnPCurveEntry` and `PointOnSurfaceEntry`.)
+
+---
+
+## 10.5 `BRepGraphInc_Populate::Options` field removal
+
+`[8rc5-to-8final]`
+
+The `CreateAutoProduct` field was removed from `BRepGraphInc_Populate::Options` in final. The manual `include_body_pre` binding in `ocp.toml` was updated to remove the corresponding `.def_readwrite` line.
+
+**ocp.toml**
+
+```diff
+  py::class_<BRepGraphInc_Populate::Options>(m, "BRepGraphInc_Populate_Options")
+      .def(py::init<>())
+      .def_readwrite("ExtractRegularities", &BRepGraphInc_Populate::Options::ExtractRegularities)
+-     .def_readwrite("ExtractVertexPointReps", &BRepGraphInc_Populate::Options::ExtractVertexPointReps)
+-     .def_readwrite("CreateAutoProduct", &BRepGraphInc_Populate::Options::CreateAutoProduct);
++     .def_readwrite("ExtractVertexPointReps", &BRepGraphInc_Populate::Options::ExtractVertexPointReps);
+```
+
+---
+
+## 10.6 `PointSetLib` module removed
+
+`[8rc5-to-8final]`
+
+OCCT 8.0.0 final reversed the rc5 deprecation of `GProp_PEquation` and `GProp_PGProps`. The `PointSetLib_Equation` and `PointSetLib_Props` headers were removed, and the classes were restored as full implementations in `GProp`. The `PointSetLib` module was commented out of the `ocp.toml` module list.
+
+**ocp.toml**
+
+```diff
+- "PointSetLib",
++ #"PointSetLib",  # removed in OCCT 8.0.0 final (un-deprecated back into GProp)
+```
+
+---
+
+## 10.7 `MathLin_Jacobi.hxx` header exclusion
+
+`[8rc5-to-8final]`
+
+`MathLin_Jacobi.hxx` contains three inline functions (`Jacobi`, `EigenValues`, `SpectralDecomposition`) all of which are already in `exclude_functions`. The header also triggers a compile error when included alongside `MathLin_EigenSearch.hxx` in the same translation unit — a name-resolution clash between `MathLin::EigenResult` (from `EigenSearch`) and `MathUtils::EigenResult` (imported via `using namespace MathUtils` in both headers).
+
+Inside `MathLin_Jacobi.hxx`, the statement `EigenResult aResult;` declares a variable of type `MathLin::EigenResult` (the local namespace wins), but line 90 then accesses `aResult.NbIterations` — a field that only exists on `MathUtils::EigenResult`, not on `MathLin::EigenResult`. This is not an OCCT bug: OCCT's own build never includes both headers in the same TU. OCP's approach of including all module headers in one TU exposes the clash.
+
+In rc5 the header was patched (commenting out line 90). In final, since the header contributes no types, enums, or typedefs — only the three already-excluded functions — it is excluded from the global header list instead.
+
+**ocp.toml**
+
+```diff
+  exclude = [...
+-            "OSD_StreamBuffer.hxx"
++            "OSD_StreamBuffer.hxx",
++            "MathLin_Jacobi.hxx"
+             ]
+```
+
+---
+
+## 10.8 Builtin type qualification in non-type template parameters
+
+`[8rc5-to-8final]`
+
+OCCT 8.0.0 final added `BRepGraph_RefsIterator::RefIterator<RefType, bool TheFullTraverse>` — a class template with a non-type `bool` template parameter. pywrap's `ClassTemplateInfo.__init__` qualifies non-type parameter types with the enclosing scope (e.g. `Kind` → `BRepGraph_NodeId::Kind`). It was incorrectly qualifying C++ builtin type keywords, turning `bool` into `BRepGraph_RefsIterator::bool`.
+
+Fix: skip qualification when the type is a C++ builtin. A `_BUILTIN_TYPES` frozenset of known builtin type spellings (`bool`, `int`, `double`, `size_t`, `uint32_t`, etc.) gates the scope-prefixing logic.
+
+**pywrap/bindgen/header.py** — `ClassTemplateInfo.__init__`
+
+```diff
+                  type_spelling = el.type.spelling
+-                 if scope and "::" not in type_spelling:
++                 _BUILTIN_TYPES = frozenset({
++                     "bool", "char", "short", "int", "long", "float", "double",
++                     "void", "size_t", "unsigned", "signed", "char16_t", "char32_t",
++                     "wchar_t", "uint32_t", "int32_t", "uint64_t", "int64_t",
++                     "uint16_t", "int16_t", "uint8_t", "int8_t",
++                 })
++                 if (scope and "::" not in type_spelling
++                         and type_spelling not in _BUILTIN_TYPES):
+                      type_spelling = scope + "::" + type_spelling
+```
+
+---
+
+## 10.9 Namespace-sibling type qualification for nested classes
+
+`[8rc5-to-8final]`
+
+`BRepGraph_ReverseIterator::ParentsOf<TypedIdT>::Definition()` returns `const typename DefTraits<TypedIdT>::DefType &`. `DefTraits` is a sibling class template in the same `BRepGraph_ReverseIterator` namespace. pywrap's `_qualify_nested_types` walks up through enclosing *class* ancestors but stopped at namespace boundaries — sibling types in the enclosing namespace were never collected, producing bare `DefTraits` in the generated binding code (unresolved at global scope).
+
+Fix: after the class-ancestor walk, if the next parent is a namespace, also collect its direct children into the qualification map. This extends the existing walk without changing its behavior for class-only hierarchies.
+
+**pywrap/bindgen/header.py** — `_qualify_nested_types`, after the class ancestor loop
+
+```diff
+                  cur = cur.semantic_parent
++
++             # After walking class ancestors, if the enclosing scope is a
++             # namespace, also collect sibling types from that namespace.
++             if cur and cur.kind == CursorKind.NAMESPACE:
++                 ns_prefix = _full_namespace_path(cur)
++                 for child in cur.get_children():
++                     if child.kind in type_kinds and child.spelling:
++                         if child.spelling not in name_to_prefix:
++                             name_to_prefix[child.spelling] = ns_prefix
+
+          # For namespaces, scan ALL blocks ...
+```
+
+---
+
+## 10.10 Symbols file regeneration
+
+`[8rc5-to-8final]`
+
+`symbols_mangled_mac.dat` regenerated from the OCCT 8.0.0 final libraries (with VTK):
+
+```bash
+nm /opt/local/occt-8.0.0-vtk/lib/libTK*.dylib | awk 'NF>=3 {print $3}' | sort -u > symbols_mangled_mac.dat
+```
+
+122,162 symbols (vs 185,607 in rc5 — the reduction reflects OCCT 8.0's increased use of `= default` constructors and inlined methods that produce no library symbols).
 
 ---

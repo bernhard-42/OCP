@@ -11,17 +11,35 @@
 // Alternatively, this file may be used under the terms of Open CASCADE
 // commercial license or contractual agreement.
 
-#ifndef _BRepGraph_RegularityLayer_HeaderFile
-#define _BRepGraph_RegularityLayer_HeaderFile
+#ifndef _BRepGraph_LayerRegularity_HeaderFile
+#define _BRepGraph_LayerRegularity_HeaderFile
 
 #include <BRepGraph_Layer.hxx>
 
 #include <GeomAbs_Shape.hxx>
 #include <NCollection_DataMap.hxx>
-#include <NCollection_Vector.hxx>
+#include <NCollection_DynamicArray.hxx>
 
-//! @brief Stores edge continuity records between adjacent face pairs.
-class BRepGraph_RegularityLayer : public BRepGraph_Layer
+//! @brief Persistent edge-continuity store, keyed by (edge, F1, F2).
+//!
+//! Each entry holds the geometric continuity (C^k / G^k) across the face pair
+//! at a given edge. F1 == F2 represents seam continuity across a closed
+//! surface's seam line; F1 != F2 represents inter-face regularity. The schema
+//! mirrors classical BRep_Tool::Continuity(edge, F1, F2).
+//!
+//! ## Lifetime policy
+//! The layer is **persistent metadata**: stored values survive arbitrary
+//! mutations to the referenced edges and faces. Only the following events
+//! discard data:
+//!   - OnNodeRemoved(edge|face) - the referenced node is gone; entries naming
+//!     it are dropped (or migrated when a replacement is provided).
+//!   - OnCompact - ids are remapped; entries pointing to removed nodes drop.
+//!   - InvalidateAll() / Clear() - explicit caller request.
+//! In particular, this layer does NOT subscribe to OnNodeModified: a tolerance
+//! bump or NaturalRestriction toggle leaves stored continuity intact. Callers
+//! that change the underlying geometry are responsible for refreshing affected
+//! entries (typically via SetRegularity, removeRegularity, or InvalidateAll).
+class BRepGraph_LayerRegularity : public BRepGraph_Layer
 {
 public:
   //! Return fixed layer type GUID.
@@ -39,7 +57,7 @@ public:
 
   struct EdgeRegularities
   {
-    NCollection_Vector<RegularityEntry> Entries;
+    NCollection_DynamicArray<RegularityEntry> Entries;
 
     [[nodiscard]] bool IsEmpty() const { return Entries.IsEmpty(); }
   };
@@ -52,7 +70,7 @@ public:
                                       const BRepGraph_FaceId theFace2,
                                       GeomAbs_Shape* const   theContinuity = nullptr) const;
 
-  Standard_EXPORT int           NbRegularities(const BRepGraph_EdgeId theEdge) const;
+  Standard_EXPORT uint32_t      NbRegularities(const BRepGraph_EdgeId theEdge) const;
   Standard_EXPORT GeomAbs_Shape MaxContinuity(const BRepGraph_EdgeId theEdge) const;
 
   [[nodiscard]] bool HasBindings() const { return myEdgeRegularities.Extent() != 0; }
@@ -62,19 +80,22 @@ public:
                                      const BRepGraph_FaceId theFace2,
                                      const GeomAbs_Shape    theContinuity);
 
+  //! Copy all regularity entries from one edge to another.
+  Standard_EXPORT void CopyRegularities(const BRepGraph_EdgeId theSourceEdge,
+                                        const BRepGraph_EdgeId theTargetEdge);
+
+  //! Remove all regularity entries bound to the edge.
+  Standard_EXPORT void RemoveRegularities(const BRepGraph_EdgeId theEdge) noexcept;
+
   Standard_EXPORT const TCollection_AsciiString& Name() const override;
-  [[nodiscard]] Standard_EXPORT int              SubscribedKinds() const override;
-  Standard_EXPORT void OnNodeModified(const BRepGraph_NodeId theNode) noexcept override;
-  Standard_EXPORT void OnNodesModified(
-    const NCollection_Vector<BRepGraph_NodeId>& theModifiedNodes) noexcept override;
-  Standard_EXPORT void OnNodeRemoved(const BRepGraph_NodeId theNode,
-                                     const BRepGraph_NodeId theReplacement) noexcept override;
-  Standard_EXPORT void OnCompact(
-    const NCollection_DataMap<BRepGraph_NodeId, BRepGraph_NodeId>& theRemapMap) noexcept override;
+  Standard_EXPORT void                           OnNodeRemoved(const BRepGraph_NodeId theNode,
+                                                               const BRepGraph_NodeId theReplacement) noexcept override;
+  Standard_EXPORT void                           OnCompact(
+                              const NCollection_DataMap<BRepGraph_NodeId, BRepGraph_NodeId>& theRemapMap) noexcept override;
   Standard_EXPORT void InvalidateAll() noexcept override;
   Standard_EXPORT void Clear() noexcept override;
 
-  DEFINE_STANDARD_RTTIEXT(BRepGraph_RegularityLayer, BRepGraph_Layer)
+  DEFINE_STANDARD_RTTIEXT(BRepGraph_LayerRegularity, BRepGraph_Layer)
 
 private:
   void normalizeFacePair(BRepGraph_FaceId& theFace1, BRepGraph_FaceId& theFace2) const noexcept;
@@ -92,8 +113,8 @@ private:
                            const BRepGraph_FaceId theNewFace) noexcept;
 
 private:
-  NCollection_DataMap<BRepGraph_EdgeId, EdgeRegularities>                     myEdgeRegularities;
-  NCollection_DataMap<BRepGraph_FaceId, NCollection_Vector<BRepGraph_EdgeId>> myFaceToEdges;
+  NCollection_DataMap<BRepGraph_EdgeId, EdgeRegularities> myEdgeRegularities;
+  NCollection_DataMap<BRepGraph_FaceId, NCollection_DynamicArray<BRepGraph_EdgeId>> myFaceToEdges;
 };
 
-#endif // _BRepGraph_RegularityLayer_HeaderFile
+#endif // _BRepGraph_LayerRegularity_HeaderFile

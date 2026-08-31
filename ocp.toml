@@ -135,7 +135,7 @@ modules = [
 "GeomFill",
 "GeomInt",
 "GeomPlate",
-"PointSetLib",
+#"PointSetLib",  # removed in OCCT 8.0.0 final (un-deprecated back into GProp)
 "Hatch",
 "HatchGen",
 "IntCurve",
@@ -394,7 +394,8 @@ exclude = ["Standard_Handle.hxx","Standard", "Standard_MemoryUtils.hxx",
            "BRepMesh_NURBSRangeSplitter.hxx","BRepMesh_SphereRangeSplitter.hxx",
            "BRepMesh_TorusRangeSplitter.hxx","BRepMesh_UVParamRangeSplitter.hxx","OpenGl_GLESExtensions.hxx",
            "IVtk_IShapePickerAlgo.hxx","ProjLib_HCompProjectedCurve.hxx","ProjLib_HProjectedCurve.hxx",
-           "OSD_StreamBuffer.hxx"
+           "OSD_StreamBuffer.hxx",
+           "MathLin_Jacobi.hxx"
            ]
 #           "BVH_Box.hxx","BVH_tools.hxx"
 
@@ -541,6 +542,8 @@ void register_template_NCollection_Vector(py::object &m, const char *name){
 
         include_superclass_templates = ["NCollection_Sequence"]
 
+        [Modules.NCollection.Templates.NCollection_LinearVector]
+
         [Modules.NCollection.parsing_headers]
 
             "NCollection_CellFilter.hxx" = """#include <gp_XYZ.hxx>
@@ -556,21 +559,20 @@ void register_template_NCollection_Vector(py::object &m, const char *name){
     py::class_<BRepGraphInc_Populate::Options>(m, "BRepGraphInc_Populate_Options")
         .def(py::init<>())
         .def_readwrite("ExtractRegularities", &BRepGraphInc_Populate::Options::ExtractRegularities)
-        .def_readwrite("ExtractVertexPointReps", &BRepGraphInc_Populate::Options::ExtractVertexPointReps)
-        .def_readwrite("CreateAutoProduct", &BRepGraphInc_Populate::Options::CreateAutoProduct);
+        .def_readwrite("ExtractVertexPointReps", &BRepGraphInc_Populate::Options::ExtractVertexPointReps);
 """
         exclude_class_templates = ["HasIsRemoved"]
         [Modules.BRepGraph.parsing_headers]
             "BRepGraph_MutGuard.hxx" = """#include <BRepGraph.hxx>
 #include <BRepGraphInc_Definition.hxx>"""
             "BRepGraph_CacheKindIterator.hxx" = "#include <BRepGraph.hxx>"
-            # Inject NCollection_Vector<X> typedef aliases for every typed ID
+            # Inject NCollection_DynamicArray<X> typedef aliases for every typed ID
             # and BRepGraphInc::*Def/*Ref struct that BRepGraph methods use
             # in their return types.  These typedefs aren't declared in the
             # OCCT 8.0 BRepGraph headers (the templates are used inline in
             # method signatures), so without injecting them pywrap doesn't
             # see them, doesn't emit the matching
-            # `preregister_template_NCollection_Vector<T>(m, "...")` calls,
+            # `preregister_template_NCollection_DynamicArray<T>(m, "...")` calls,
             # and pybind11 raises `TypeError: Unable to convert function
             # return value` at runtime when those methods are invoked.
             #
@@ -582,7 +584,7 @@ void register_template_NCollection_Vector(py::object &m, const char *name){
             "BRepGraph.hxx" = """
 #include <BRepGraph_TopoView.hxx>
 #include <BRepGraph_RefsView.hxx>
-#include <BRepGraph_BuilderView.hxx>
+#include <BRepGraph_EditorView.hxx>
 #include <BRepGraph_HistoryRecord.hxx>
 #include <BRepGraph_NodeId.hxx>
 #include <BRepGraph_RefId.hxx>
@@ -590,67 +592,67 @@ void register_template_NCollection_Vector(py::object &m, const char *name){
 #include <BRepGraph_UID.hxx>
 #include <BRepGraphInc_Definition.hxx>
 #include <BRepGraphInc_Reference.hxx>
-#include <NCollection_Vector.hxx>
+#include <NCollection_DynamicArray.hxx>
 
-using BRepGraph_VectorOfFaceId       = NCollection_Vector<BRepGraph_FaceId>;
-using BRepGraph_VectorOfEdgeId       = NCollection_Vector<BRepGraph_EdgeId>;
-using BRepGraph_VectorOfVertexId     = NCollection_Vector<BRepGraph_VertexId>;
-using BRepGraph_VectorOfWireId       = NCollection_Vector<BRepGraph_WireId>;
-using BRepGraph_VectorOfShellId      = NCollection_Vector<BRepGraph_ShellId>;
-using BRepGraph_VectorOfSolidId      = NCollection_Vector<BRepGraph_SolidId>;
-using BRepGraph_VectorOfCoEdgeId     = NCollection_Vector<BRepGraph_CoEdgeId>;
-using BRepGraph_VectorOfCompoundId   = NCollection_Vector<BRepGraph_CompoundId>;
-using BRepGraph_VectorOfCompSolidId  = NCollection_Vector<BRepGraph_CompSolidId>;
-using BRepGraph_VectorOfProductId    = NCollection_Vector<BRepGraph_ProductId>;
-using BRepGraph_VectorOfOccurrenceId = NCollection_Vector<BRepGraph_OccurrenceId>;
-using BRepGraph_VectorOfNodeId       = NCollection_Vector<BRepGraph_NodeId>;
+using BRepGraph_VectorOfFaceId       = NCollection_DynamicArray<BRepGraph_FaceId>;
+using BRepGraph_VectorOfEdgeId       = NCollection_DynamicArray<BRepGraph_EdgeId>;
+using BRepGraph_VectorOfVertexId     = NCollection_DynamicArray<BRepGraph_VertexId>;
+using BRepGraph_VectorOfWireId       = NCollection_DynamicArray<BRepGraph_WireId>;
+using BRepGraph_VectorOfShellId      = NCollection_DynamicArray<BRepGraph_ShellId>;
+using BRepGraph_VectorOfSolidId      = NCollection_DynamicArray<BRepGraph_SolidId>;
+using BRepGraph_VectorOfCoEdgeId     = NCollection_DynamicArray<BRepGraph_CoEdgeId>;
+using BRepGraph_VectorOfCompoundId   = NCollection_DynamicArray<BRepGraph_CompoundId>;
+using BRepGraph_VectorOfCompSolidId  = NCollection_DynamicArray<BRepGraph_CompSolidId>;
+using BRepGraph_VectorOfProductId    = NCollection_DynamicArray<BRepGraph_ProductId>;
+using BRepGraph_VectorOfOccurrenceId = NCollection_DynamicArray<BRepGraph_OccurrenceId>;
+using BRepGraph_VectorOfNodeId       = NCollection_DynamicArray<BRepGraph_NodeId>;
 
-using BRepGraph_VectorOfRefId           = NCollection_Vector<BRepGraph_RefId>;
-using BRepGraph_VectorOfChildRefId      = NCollection_Vector<BRepGraph_ChildRefId>;
-using BRepGraph_VectorOfFaceRefId       = NCollection_Vector<BRepGraph_FaceRefId>;
-using BRepGraph_VectorOfCoEdgeRefId     = NCollection_Vector<BRepGraph_CoEdgeRefId>;
-using BRepGraph_VectorOfShellRefId      = NCollection_Vector<BRepGraph_ShellRefId>;
-using BRepGraph_VectorOfSolidRefId      = NCollection_Vector<BRepGraph_SolidRefId>;
-using BRepGraph_VectorOfVertexRefId     = NCollection_Vector<BRepGraph_VertexRefId>;
-using BRepGraph_VectorOfWireRefId       = NCollection_Vector<BRepGraph_WireRefId>;
-using BRepGraph_VectorOfOccurrenceRefId = NCollection_Vector<BRepGraph_OccurrenceRefId>;
+using BRepGraph_VectorOfRefId           = NCollection_DynamicArray<BRepGraph_RefId>;
+using BRepGraph_VectorOfChildRefId      = NCollection_DynamicArray<BRepGraph_ChildRefId>;
+using BRepGraph_VectorOfFaceRefId       = NCollection_DynamicArray<BRepGraph_FaceRefId>;
+using BRepGraph_VectorOfCoEdgeRefId     = NCollection_DynamicArray<BRepGraph_CoEdgeRefId>;
+using BRepGraph_VectorOfShellRefId      = NCollection_DynamicArray<BRepGraph_ShellRefId>;
+using BRepGraph_VectorOfSolidRefId      = NCollection_DynamicArray<BRepGraph_SolidRefId>;
+using BRepGraph_VectorOfVertexRefId     = NCollection_DynamicArray<BRepGraph_VertexRefId>;
+using BRepGraph_VectorOfWireRefId       = NCollection_DynamicArray<BRepGraph_WireRefId>;
+using BRepGraph_VectorOfOccurrenceRefId = NCollection_DynamicArray<BRepGraph_OccurrenceRefId>;
 
-using BRepGraph_VectorOfUID    = NCollection_Vector<BRepGraph_UID>;
-using BRepGraph_VectorOfRefUID = NCollection_Vector<BRepGraph_RefUID>;
+using BRepGraph_VectorOfUID    = NCollection_DynamicArray<BRepGraph_UID>;
+using BRepGraph_VectorOfRefUID = NCollection_DynamicArray<BRepGraph_RefUID>;
 
-using BRepGraph_VectorOfHistoryRecord = NCollection_Vector<BRepGraph_HistoryRecord>;
+using BRepGraph_VectorOfHistoryRecord = NCollection_DynamicArray<BRepGraph_HistoryRecord>;
 
-using BRepGraph_VectorOfTriangulationRepId = NCollection_Vector<BRepGraph_TriangulationRepId>;
-using BRepGraph_VectorOfPolygonOnTriRepId  = NCollection_Vector<BRepGraph_PolygonOnTriRepId>;
+using BRepGraph_VectorOfTriangulationRepId = NCollection_DynamicArray<BRepGraph_TriangulationRepId>;
+using BRepGraph_VectorOfPolygonOnTriRepId  = NCollection_DynamicArray<BRepGraph_PolygonOnTriRepId>;
 
-using BRepGraphInc_VectorOfFaceDef       = NCollection_Vector<BRepGraphInc::FaceDef>;
-using BRepGraphInc_VectorOfEdgeDef       = NCollection_Vector<BRepGraphInc::EdgeDef>;
-using BRepGraphInc_VectorOfCoEdgeDef     = NCollection_Vector<BRepGraphInc::CoEdgeDef>;
-using BRepGraphInc_VectorOfWireDef       = NCollection_Vector<BRepGraphInc::WireDef>;
-using BRepGraphInc_VectorOfShellDef      = NCollection_Vector<BRepGraphInc::ShellDef>;
-using BRepGraphInc_VectorOfSolidDef      = NCollection_Vector<BRepGraphInc::SolidDef>;
-using BRepGraphInc_VectorOfCompoundDef   = NCollection_Vector<BRepGraphInc::CompoundDef>;
-using BRepGraphInc_VectorOfCompSolidDef  = NCollection_Vector<BRepGraphInc::CompSolidDef>;
-using BRepGraphInc_VectorOfOccurrenceDef = NCollection_Vector<BRepGraphInc::OccurrenceDef>;
+using BRepGraphInc_VectorOfFaceDef       = NCollection_DynamicArray<BRepGraphInc::FaceDef>;
+using BRepGraphInc_VectorOfEdgeDef       = NCollection_DynamicArray<BRepGraphInc::EdgeDef>;
+using BRepGraphInc_VectorOfCoEdgeDef     = NCollection_DynamicArray<BRepGraphInc::CoEdgeDef>;
+using BRepGraphInc_VectorOfWireDef       = NCollection_DynamicArray<BRepGraphInc::WireDef>;
+using BRepGraphInc_VectorOfShellDef      = NCollection_DynamicArray<BRepGraphInc::ShellDef>;
+using BRepGraphInc_VectorOfSolidDef      = NCollection_DynamicArray<BRepGraphInc::SolidDef>;
+using BRepGraphInc_VectorOfCompoundDef   = NCollection_DynamicArray<BRepGraphInc::CompoundDef>;
+using BRepGraphInc_VectorOfCompSolidDef  = NCollection_DynamicArray<BRepGraphInc::CompSolidDef>;
+using BRepGraphInc_VectorOfOccurrenceDef = NCollection_DynamicArray<BRepGraphInc::OccurrenceDef>;
 
-using BRepGraphInc_VectorOfFaceRef   = NCollection_Vector<BRepGraphInc::FaceRef>;
-using BRepGraphInc_VectorOfCoEdgeRef = NCollection_Vector<BRepGraphInc::CoEdgeRef>;
-using BRepGraphInc_VectorOfShellRef  = NCollection_Vector<BRepGraphInc::ShellRef>;
-using BRepGraphInc_VectorOfSolidRef  = NCollection_Vector<BRepGraphInc::SolidRef>;
-using BRepGraphInc_VectorOfVertexRef = NCollection_Vector<BRepGraphInc::VertexRef>;
-using BRepGraphInc_VectorOfChildRef  = NCollection_Vector<BRepGraphInc::ChildRef>;
+using BRepGraphInc_VectorOfFaceRef   = NCollection_DynamicArray<BRepGraphInc::FaceRef>;
+using BRepGraphInc_VectorOfCoEdgeRef = NCollection_DynamicArray<BRepGraphInc::CoEdgeRef>;
+using BRepGraphInc_VectorOfShellRef  = NCollection_DynamicArray<BRepGraphInc::ShellRef>;
+using BRepGraphInc_VectorOfSolidRef  = NCollection_DynamicArray<BRepGraphInc::SolidRef>;
+using BRepGraphInc_VectorOfVertexRef = NCollection_DynamicArray<BRepGraphInc::VertexRef>;
+using BRepGraphInc_VectorOfChildRef  = NCollection_DynamicArray<BRepGraphInc::ChildRef>;
 
 // --- #16: nested helper-type vectors on public API surface ---------------
 #include <BRepGraph_Validate.hxx>
-#include <BRepGraph_RegularityLayer.hxx>
-#include <BRepGraph_ParamLayer.hxx>
+#include <BRepGraph_LayerRegularity.hxx>
+#include <BRepGraph_LayerParam.hxx>
 
-using BRepGraph_Validate_VectorOfIssue                  = NCollection_Vector<BRepGraph_Validate::Issue>;
-using BRepGraph_BuilderView_VectorOfBoundaryIssue       = NCollection_Vector<BRepGraph::BuilderView::BoundaryIssue>;
-using BRepGraph_RegularityLayer_VectorOfRegularityEntry = NCollection_Vector<BRepGraph_RegularityLayer::RegularityEntry>;
-using BRepGraph_ParamLayer_VectorOfPointOnCurveEntry    = NCollection_Vector<BRepGraph_ParamLayer::PointOnCurveEntry>;
-using BRepGraph_ParamLayer_VectorOfPointOnPCurveEntry   = NCollection_Vector<BRepGraph_ParamLayer::PointOnPCurveEntry>;
-using BRepGraph_ParamLayer_VectorOfPointOnSurfaceEntry  = NCollection_Vector<BRepGraph_ParamLayer::PointOnSurfaceEntry>;
+using BRepGraph_Validate_VectorOfIssue                      = NCollection_DynamicArray<BRepGraph_Validate::Issue>;
+using BRepGraph_EditorView_VectorOfBoundaryIssue            = NCollection_DynamicArray<BRepGraph::EditorView::BoundaryIssue>;
+using BRepGraph_LayerRegularity_VectorOfRegularityEntry     = NCollection_DynamicArray<BRepGraph_LayerRegularity::RegularityEntry>;
+using BRepGraph_LayerParam_VectorOfPointOnCurveEntry        = NCollection_DynamicArray<BRepGraph_LayerParam::PointOnCurveEntry>;
+using BRepGraph_LayerParam_VectorOfPointOnPCurveEntry       = NCollection_DynamicArray<BRepGraph_LayerParam::PointOnPCurveEntry>;
+using BRepGraph_LayerParam_VectorOfPointOnSurfaceEntry      = NCollection_DynamicArray<BRepGraph_LayerParam::PointOnSurfaceEntry>;
 
 // --- #17: ForwardRangeIterator / DataMap typedefs deferred ---------------
 // NCollection_DataMap<...> uses in BRepGraph headers are all private fields.
@@ -1366,7 +1368,7 @@ struct __GLXFBConfigRec {};"""
 
         [Modules.STEPCAFControl.parsing_headers]
 
-            "STEPCAFControl_Writer.hxx" = "#include <NCollection_Vector.hxx>"
+            "STEPCAFControl_Writer.hxx" = "#include <NCollection_DynamicArray.hxx>"
 
     [Modules.XCAFDimTolObjects]
 

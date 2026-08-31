@@ -87,7 +87,7 @@ inline EigenResult Jacobi(const math_Matrix& theA, bool theSortDescending = true
     return aResult;
   }
 
-  // OCP patch: MathLin::EigenResult has no NbIterations (OCCT rc5 bug)
+  // OCP patch: MathLin::EigenResult has no NbIterations (using namespace MathUtils ambiguity)
   // aResult.NbIterations = static_cast<size_t>(aNbRotations);
 
   // Sort eigenvalues and eigenvectors if requested

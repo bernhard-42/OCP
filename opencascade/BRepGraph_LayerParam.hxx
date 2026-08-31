@@ -11,17 +11,36 @@
 // Alternatively, this file may be used under the terms of Open CASCADE
 // commercial license or contractual agreement.
 
-#ifndef _BRepGraph_ParamLayer_HeaderFile
-#define _BRepGraph_ParamLayer_HeaderFile
+#ifndef _BRepGraph_LayerParam_HeaderFile
+#define _BRepGraph_LayerParam_HeaderFile
 
 #include <BRepGraph_Layer.hxx>
 
 #include <NCollection_DataMap.hxx>
-#include <NCollection_Vector.hxx>
+#include <NCollection_DynamicArray.hxx>
 #include <gp_Pnt2d.hxx>
 
-//! @brief Stores vertex-on-curve, vertex-on-surface, and vertex-on-PCurve bindings.
-class BRepGraph_ParamLayer : public BRepGraph_Layer
+//! @brief Persistent vertex point-representation store: point-on-curve,
+//! point-on-surface, and point-on-PCurve parameters per vertex.
+//!
+//! Mirrors classical BRep_PointRepresentation entries on TVertex: each vertex
+//! may carry parameters identifying its location on incident edges, faces, or
+//! coedges (PCurves). The layer is the single source of truth for these
+//! parameters in BRepGraph.
+//!
+//! ## Lifetime policy
+//! The layer is **persistent metadata**: stored values survive arbitrary
+//! mutations to the referenced vertices, edges, faces, and coedges. Only the
+//! following events discard data:
+//!   - OnNodeRemoved - the referenced node is gone; entries naming it are
+//!     dropped (or migrated when a replacement is provided).
+//!   - OnCompact - ids are remapped; entries pointing to removed nodes drop.
+//!   - InvalidateAll() / Clear() - explicit caller request.
+//! The layer does NOT subscribe to OnNodeModified: a tolerance bump, parameter
+//! range adjustment, or NaturalRestriction toggle on a referenced node leaves
+//! point-representation data intact. Callers that change geometry are
+//! responsible for refreshing affected entries.
+class BRepGraph_LayerParam : public BRepGraph_Layer
 {
 public:
   //! Return fixed layer type GUID.
@@ -51,9 +70,9 @@ public:
 
   struct VertexParams
   {
-    NCollection_Vector<PointOnCurveEntry>   PointsOnCurve;
-    NCollection_Vector<PointOnSurfaceEntry> PointsOnSurface;
-    NCollection_Vector<PointOnPCurveEntry>  PointsOnPCurve;
+    NCollection_DynamicArray<PointOnCurveEntry>   PointsOnCurve;
+    NCollection_DynamicArray<PointOnSurfaceEntry> PointsOnSurface;
+    NCollection_DynamicArray<PointOnPCurveEntry>  PointsOnPCurve;
 
     [[nodiscard]] bool IsEmpty() const
     {
@@ -75,9 +94,9 @@ public:
                                          const BRepGraph_CoEdgeId theCoEdge,
                                          double* const            theParameter = nullptr) const;
 
-  Standard_EXPORT int NbPointsOnCurve(const BRepGraph_VertexId theVertex) const;
-  Standard_EXPORT int NbPointsOnSurface(const BRepGraph_VertexId theVertex) const;
-  Standard_EXPORT int NbPointsOnPCurve(const BRepGraph_VertexId theVertex) const;
+  Standard_EXPORT uint32_t NbPointsOnCurve(const BRepGraph_VertexId theVertex) const;
+  Standard_EXPORT uint32_t NbPointsOnSurface(const BRepGraph_VertexId theVertex) const;
+  Standard_EXPORT uint32_t NbPointsOnPCurve(const BRepGraph_VertexId theVertex) const;
 
   [[nodiscard]] bool HasBindings() const { return myVertexParams.Extent() != 0; }
 
@@ -95,18 +114,14 @@ public:
                                         const double             theParameter);
 
   Standard_EXPORT const TCollection_AsciiString& Name() const override;
-  [[nodiscard]] Standard_EXPORT int              SubscribedKinds() const override;
-  Standard_EXPORT void OnNodeModified(const BRepGraph_NodeId theNode) noexcept override;
-  Standard_EXPORT void OnNodesModified(
-    const NCollection_Vector<BRepGraph_NodeId>& theModifiedNodes) noexcept override;
-  Standard_EXPORT void OnNodeRemoved(const BRepGraph_NodeId theNode,
-                                     const BRepGraph_NodeId theReplacement) noexcept override;
-  Standard_EXPORT void OnCompact(
-    const NCollection_DataMap<BRepGraph_NodeId, BRepGraph_NodeId>& theRemapMap) noexcept override;
+  Standard_EXPORT void                           OnNodeRemoved(const BRepGraph_NodeId theNode,
+                                                               const BRepGraph_NodeId theReplacement) noexcept override;
+  Standard_EXPORT void                           OnCompact(
+                              const NCollection_DataMap<BRepGraph_NodeId, BRepGraph_NodeId>& theRemapMap) noexcept override;
   Standard_EXPORT void InvalidateAll() noexcept override;
   Standard_EXPORT void Clear() noexcept override;
 
-  DEFINE_STANDARD_RTTIEXT(BRepGraph_ParamLayer, BRepGraph_Layer)
+  DEFINE_STANDARD_RTTIEXT(BRepGraph_LayerParam, BRepGraph_Layer)
 
 private:
   void removeVertexBindings(const BRepGraph_VertexId theVertex) noexcept;
@@ -140,11 +155,13 @@ private:
                            const BRepGraph_CoEdgeId theCoEdge) noexcept;
 
 private:
-  NCollection_DataMap<BRepGraph_VertexId, VertexParams>                         myVertexParams;
-  NCollection_DataMap<BRepGraph_EdgeId, NCollection_Vector<BRepGraph_VertexId>> myEdgeToVertices;
-  NCollection_DataMap<BRepGraph_FaceId, NCollection_Vector<BRepGraph_VertexId>> myFaceToVertices;
-  NCollection_DataMap<BRepGraph_CoEdgeId, NCollection_Vector<BRepGraph_VertexId>>
+  NCollection_DataMap<BRepGraph_VertexId, VertexParams> myVertexParams;
+  NCollection_DataMap<BRepGraph_EdgeId, NCollection_DynamicArray<BRepGraph_VertexId>>
+    myEdgeToVertices;
+  NCollection_DataMap<BRepGraph_FaceId, NCollection_DynamicArray<BRepGraph_VertexId>>
+    myFaceToVertices;
+  NCollection_DataMap<BRepGraph_CoEdgeId, NCollection_DynamicArray<BRepGraph_VertexId>>
     myCoEdgeToVertices;
 };
 
-#endif // _BRepGraph_ParamLayer_HeaderFile
+#endif // _BRepGraph_LayerParam_HeaderFile
